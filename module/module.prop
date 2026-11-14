@@ -1,0 +1,6 @@
+id=stunroute
+name=STUN 端点自动路由
+version=v0.2.1
+versionCode=3
+author=eta
+description=读取 DNS TXT 发布的 STUN 映射端点，自动 DNAT 到最新公网 ip:port

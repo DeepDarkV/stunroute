@@ -1,0 +1,11 @@
+# 构建产物
+build/
+dexout/
+stage/
+out/
+run/
+*.dex
+
+# 临时
+*.log
+test/*.png

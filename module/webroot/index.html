@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>stunroute</title>
+<script>
+window.onerror = function (m, s, l, c) {
+  try {
+    var d = document.getElementById('jserr');
+    if (!d) {
+      d = document.createElement('div');
+      d.id = 'jserr';
+      d.style.cssText = 'position:fixed;left:0;right:0;top:0;background:#b00020;color:#fff;font:12px/1.4 monospace;padding:8px;z-index:9999;white-space:pre-wrap';
+      document.body.appendChild(d);
+    }
+    d.textContent = '[JS] ' + m + ' @line ' + l + ':' + c;
+  } catch (e) {}
+};
+</script>
+<style>
+:root{
+  --bg:#0f1115; --card:#171a21; --card2:#1d212a; --line:#262b36;
+  --fg:#e6e9ef; --dim:#8b93a7; --accent:#4f8cff; --ok:#3ddc97; --warn:#ffb454; --bad:#ff5d5d;
+  --radius:14px;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f4f6fa;--card:#fff;--card2:#f7f9fc;--line:#e2e7f0;--fg:#131722;--dim:#67707f;}
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC",sans-serif;padding-bottom:40px}
+header{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:14px 16px;display:flex;align-items:center;gap:10px}
+header h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.3px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+.dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+header .meta{font-size:12px;color:var(--dim);margin-left:auto;text-align:right}
+main{padding:16px;display:flex;flex-direction:column;gap:14px;max-width:760px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.card h2{margin:0;font-size:13px;font-weight:600;color:var(--dim);letter-spacing:.6px;padding:13px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.card h2 .sp{flex:1}
+.card .body{padding:14px 16px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>*{flex:1 1 140px;min-width:0}
+label{display:block;font-size:12px;color:var(--dim);margin:0 0 5px}
+input,select{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--fg);border-radius:9px;padding:9px 11px;font-size:14px;font-family:inherit;outline:none}
+input:focus,select:focus{border-color:var(--accent)}
+input.mono,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+button{background:var(--card2);border:1px solid var(--line);color:var(--fg);border-radius:9px;padding:8px 13px;font-size:13px;font-family:inherit;cursor:pointer;transition:.15s}
+button:active{transform:scale(.97)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.ghost{background:transparent}
+button.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--line))}
+button.sm{padding:5px 10px;font-size:12px}
+.svc{border-bottom:1px solid var(--line);padding:13px 16px}
+.svc:last-child{border-bottom:none}
+.svc-top{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.svc-name{font-weight:600;font-size:15px}
+.badge{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.badge.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.badge.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent);background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.svc-line{font-size:13px;color:var(--dim);font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.svc-line b{color:var(--fg);font-weight:500}
+.svc-actions{display:flex;gap:8px;margin-top:10px}
+.empty{color:var(--dim);font-size:13px;text-align:center;padding:22px 10px}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;justify-content:center;z-index:50;padding:0}
+.overlay.on{display:flex}
+.sheet{background:var(--card);width:100%;max-width:760px;border-radius:18px 18px 0 0;border:1px solid var(--line);padding:18px 16px calc(18px + env(safe-area-inset-bottom));max-height:92vh;overflow:auto}
+.sheet h3{margin:0 0 14px;font-size:16px}
+.sheet .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sheet .grid .full{grid-column:1 / -1}
+.sheet .foot{display:flex;gap:10px;margin-top:18px}
+.sheet .foot button{flex:1;padding:11px}
+pre.log{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px;font-size:11.5px;line-height:1.55;max-height:260px;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all;color:var(--dim);font-family:ui-monospace,Menlo,monospace}
+.txt-item{border-bottom:1px solid var(--line);padding:11px 0}
+.txt-item:first-child{padding-top:0}
+.txt-item:last-child{border-bottom:none;padding-bottom:0}
+.txt-name{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-bottom:4px}
+.txt-val{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--dim);word-break:break-all}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--card2);border:1px solid var(--line);padding:10px 18px;border-radius:24px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.hint{font-size:12px;color:var(--dim);margin-top:8px}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>stunroute <span style="font-size:11px;color:var(--dim);font-weight:400" id="ver">v0.2.1</span></h1>
+  <div class="meta" id="hmeta">加载中…</div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>全局设置<span class="sp"></span><button class="sm" onclick="saveGlobal()">保存</button></h2>
+    <div class="body">
+      <div class="row">
+        <div><label>DNS 服务器</label><input id="g_dns" class="mono" placeholder="223.5.5.5"></div>
+        <div><label>轮询间隔（秒）</label><input id="g_interval" type="number" min="10" max="3600" placeholder="60"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div><label>DNS 别名注入</label>
+          <select id="g_alias"><option value="1">开启</option><option value="0">关闭</option></select>
+        </div>
+        <div><label>管理端口</label><input id="g_webport" type="number" min="1024" max="65535" placeholder="8767"></div>
+      </div>
+      <div class="hint">修改轮询间隔和端口后需重启模块生效。</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>服务映射<span class="sp"></span><button class="sm primary" onclick="openEditor(-1)">+ 添加</button></h2>
+    <div id="svcList"></div>
+  </section>
+
+  <section class="card">
+    <h2>TXT 记录<span class="sp"></span><button class="sm" onclick="loadTxts()">查询全部</button></h2>
+    <div class="body" id="txtList"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section class="card">
+    <h2>运行日志<span class="sp"></span><button class="sm" onclick="loadLogs()">刷新</button></h2>
+    <div class="body"><pre class="log" id="logBox">…</pre></div>
+  </section>
+
+  <div class="hint" style="text-align:center;padding:0 16px">
+    端口变化后新连接自动走新端点；已建立的连接不会迁移。
+  </div>
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="sheet">
+    <h3 id="edTitle">添加服务</h3>
+    <div class="grid">
+      <div><label>名称</label><input id="e_name" placeholder="nas-ssh"></div>
+      <div><label>协议</label><select id="e_proto"><option>tcp</option><option>udp</option></select></div>
+      <div class="full"><label>域名（应用里访问用，可留空）</label><input id="e_domain" class="mono" placeholder="ssh.example.com"></div>
+      <div><label>虚拟回环地址</label><input id="e_vip" class="mono" placeholder="127.0.0.10"></div>
+      <div><label>端口</label><input id="e_port" type="number" min="1" max="65535" placeholder="22"></div>
+      <div class="full"><label>TXT 记录名</label><input id="e_txt" class="mono" placeholder="_stun.example.com"></div>
+      <div class="full"><label>键（多服务表时使用，可留空）</label><input id="e_key" class="mono" placeholder="ssh"></div>
+    </div>
+    <div class="foot">
+      <button class="ghost" onclick="closeEditor()">取消</button>
+      <button class="primary" onclick="submitEditor()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let state = {globals:{}, services:[]};
+let editing = -1;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function toast(msg, ms=1800){
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove('on'), ms);
+}
+
+async function api(path, opts){
+  // 浏览器里直接走 HTTP；KernelSU WebUI(file://) 下会失败，退回 ksu.exec
+  try{
+    const r = await fetch(path, opts);
+    if(r.ok) return await r.json();
+    throw new Error(await r.text());
+  }catch(e){
+    if(!(window.ksu && typeof window.ksu.exec === 'function')) throw e;
+    return await apiViaKsu(path, opts);
+  }
+}
+
+async function apiViaKsu(path, opts){
+  const isPost = opts && String(opts.method || '').toUpperCase() === 'POST';
+  const url = 'http://127.0.0.1:8767' + path;
+  const BB = '/data/adb/ksu/bin/busybox';
+  let cmd;
+  if(isPost){
+    const body = String((opts && opts.body) || '').replace(/'/g, "'\\''");
+    cmd = BB + " wget -q -O - --header='Content-Type: application/json' --post-data='" + body + "' '" + url + "'";
+  }else{
+    cmd = BB + " wget -q -O - '" + url + "'";
+  }
+  const r = await callKsu(cmd);
+  // ReSUKI/KernelSU 的 exec 可能返回字符串，也可能返回 { errno, stdout, stderr }
+  const out = (typeof r === 'string' ? r : String((r && r.stdout) || '')).trim();
+  if(!out) throw new Error('本地服务无响应（' + (typeof r === 'object' && r && r.stderr ? r.stderr : '空输出') + '）');
+  try{ return JSON.parse(out); }
+  catch(e){ throw new Error('返回内容不是 JSON: ' + out.slice(0, 80)); }
+}
+
+function callKsu(cmd){
+  if(window.ksu && typeof window.ksu.exec === 'function') return window.ksu.exec(cmd);
+  if(typeof window.exec === 'function') return window.exec(cmd);
+  throw new Error('没有可用的 ksu.exec');
+}
+
+async function loadState(){
+  try{
+    state = await api('/api/state');
+  }catch(e){
+    showError(e);
+    throw e;
+  }
+  const g = state.globals || {};
+  $('g_dns').value = g.dns_server || '';
+  $('g_interval').value = g.interval || 60;
+  $('g_alias').value = String(g.dns_alias ? 1 : 0);
+  $('g_webport').value = g.web_port || 8767;
+  renderServices();
+  $('dot').className = 'dot' + (state.running ? ' on' : '');
+  $('hmeta').textContent = (state.running ? '运行中' : '未运行') + ' · ' + (state.services || []).length + ' 个服务';
+}
+
+function showError(e){
+  const msg = (e && (e.message || e.toString())) || '未知错误';
+  $('dot').className = 'dot';
+  $('hmeta').textContent = '⚠ ' + msg.slice(0, 60);
+  $('hmeta').title = msg;
+  const box = $('svcList');
+  if(box && box.querySelector('.empty')) box.innerHTML = '<div class="empty" style="color:var(--bad)">' + esc(msg) + '</div>';
+}
+
+function renderServices(){
+  const box = $('svcList');
+  const list = state.services || [];
+  if(!list.length){ box.innerHTML = '<div class="empty">还没有服务，点右上角「+ 添加」</div>'; return; }
+  box.innerHTML = list.map((s, i) => {
+    const ready = s.target && s.target !== ':0';
+    const badge = ready ? '<span class="badge ok">已就绪</span>' : '<span class="badge bad">未解析</span>';
+    const route = ready ? `<b>${esc(s.vip)}:${esc(s.port)}</b> → <b>${esc(s.target)}</b>`
+                        : `<b>${esc(s.vip)}:${esc(s.port)}</b> → 等待 TXT`;
+    const dom = s.domain ? esc(s.domain) : '<span style="color:var(--dim)">（仅 IP 映射）</span>';
+    return `<div class="svc">
+      <div class="svc-top"><span class="svc-name">${esc(s.name)}</span>${badge}
+        <span class="sp" style="flex:1"></span>
+        <span class="badge">${esc(s.proto || 'tcp')}</span></div>
+      <div class="svc-line">${dom}:${esc(s.port)}</div>
+      <div class="svc-line">${route}</div>
+      <div class="svc-line" style="font-size:12px">TXT ${esc(s.txt || '-')}${s.key ? ' · key=' + esc(s.key) : ''}</div>
+      <div class="svc-actions">
+        <button class="sm" onclick="queryOne(${i})">查 TXT</button>
+        <button class="sm" onclick="openEditor(${i})">编辑</button>
+        <button class="sm danger" onclick="delService(${i})">删除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function saveGlobal(){
+  state.globals = {
+    dns_server: $('g_dns').value.trim(),
+    interval: parseInt($('g_interval').value) || 60,
+    dns_alias: $('g_alias').value === '1',
+    web_port: parseInt($('g_webport').value) || 8767
+  };
+  await pushConfig('全局设置已保存');
+}
+
+async function pushConfig(msg){
+  await api('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(state)});
+  toast(msg);
+  await loadState();
+}
+
+function openEditor(i){
+  const isEdit = Number.isInteger(i) && i >= 0;
+  editing = isEdit ? i : -1;
+  const s = isEdit ? state.services[i]
+                  : {proto:'tcp', vip:nextVip(), port:'', domain:'', txt:'', key:'', name:''};
+  $('edTitle').textContent = isEdit ? '编辑服务' : '添加服务';
+  $('e_name').value = s.name || '';
+  $('e_domain').value = s.domain || '';
+  $('e_vip').value = s.vip || '';
+  $('e_port').value = s.port || '';
+  $('e_proto').value = s.proto || 'tcp';
+  $('e_txt').value = s.txt || '';
+  $('e_key').value = s.key || '';
+  $('overlay').classList.add('on');
+}
+
+function closeEditor(){ $('overlay').classList.remove('on'); }
+
+function nextVip(){
+  let n = 10;
+  const used = new Set((state.services||[]).map(s=>s.vip));
+  while(used.has('127.0.0.'+n) && n < 250) n++;
+  return '127.0.0.'+n;
+}
+
+async function submitEditor(){
+  const s = {
+    name: $('e_name').value.trim(),
+    domain: $('e_domain').value.trim(),
+    vip: $('e_vip').value.trim(),
+    port: parseInt($('e_port').value) || 0,
+    proto: $('e_proto').value,
+    txt: $('e_txt').value.trim(),
+    key: $('e_key').value.trim()
+  };
+  if(!s.name || !s.vip || !s.port){ toast('名称、回环地址、端口必填'); return; }
+  if(!/^127\.\d+\.\d+\.\d+$/.test(s.vip)){ toast('回环地址需为 127.x.x.x'); return; }
+  if(state.services.some((x,i)=> i !== editing && (x.name === s.name || (x.vip === s.vip && x.port === s.port)))) {
+    toast('名称或 回环地址+端口 重复'); return;
+  }
+  if(editing >= 0) state.services[editing] = s; else state.services.push(s);
+  closeEditor();
+  await pushConfig('已保存，稍候生效');
+}
+
+async function delService(i){
+  if(!confirm('删除 ' + state.services[i].name + ' ?')) return;
+  state.services.splice(i, 1);
+  await pushConfig('已删除');
+}
+
+async function queryOne(i){
+  const s = state.services[i];
+  toast('查询中…', 800);
+  try{
+    const r = await api('/api/txt?name=' + encodeURIComponent(s.txt || '') + '&key=' + encodeURIComponent(s.key || ''));
+    if(r.raw) toast('TXT: ' + r.raw.slice(0, 80), 3500);
+    else toast('没有查到记录');
+    await loadState();
+  }catch(e){ toast('查询失败: ' + e.message); }
+}
+
+async function loadTxts(){
+  const names = [...new Set((state.services||[]).map(s=>s.txt).filter(Boolean))];
+  const box = $('txtList');
+  if(!names.length){ box.innerHTML = '<div class="empty">还没有配置 TXT 记录</div>'; return; }
+  box.innerHTML = '<div class="empty">查询中…</div>';
+  const out = [];
+  for(const n of names){
+    try{
+      const r = await api('/api/txt?name=' + encodeURIComponent(n));
+      out.push(`<div class="txt-item">
+        <div class="txt-name">${esc(n)}</div>
+        <div class="txt-val">${r.raw ? esc(r.raw) : '<span style="color:var(--bad)">无记录</span>'}</div>
+      </div>`);
+    }catch(e){
+      out.push(`<div class="txt-item"><div class="txt-name">${esc(n)}</div><div class="txt-val" style="color:var(--bad)">${esc(e.message)}</div></div>`);
+    }
+  }
+  box.innerHTML = out.join('');
+}
+
+async function loadLogs(){
+  try{
+    const r = await api('/api/logs?lines=120');
+    $('logBox').textContent = (r.lines || []).join('\n') || '(空)';
+    $('logBox').scrollTop = $('logBox').scrollHeight;
+  }catch(e){ $('logBox').textContent = '读取失败: ' + e.message; }
+}
+
+loadState().then(()=>{ loadTxts(); loadLogs(); }).catch(()=>{});
+setInterval(async ()=>{ try{ await loadState(); }catch(e){} }, 15000);
+setInterval(()=>{ loadLogs().catch(()=>{}); }, 30000);
+</script>
+</body>
+</html>
