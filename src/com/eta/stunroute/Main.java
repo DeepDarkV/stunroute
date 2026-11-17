@@ -184,11 +184,19 @@ public final class Main {
             }
             String ip = ep[0];
             int port = Integer.parseInt(ep[1]);
-            if (ip.equals(s.curIp) && port == s.curPort) return;
-            log("[" + s.name + "] 端点更新: " + s.curIp + ":" + s.curPort + " -> " + ip + ":" + port);
+            boolean changed = !ip.equals(s.curIp) || port != s.curPort;
             s.curIp = ip;
             s.curPort = port;
-            s.updatedAt = System.currentTimeMillis();
+            if (changed) {
+                log("[" + s.name + "] 端点更新: " + ip + ":" + port);
+                s.updatedAt = System.currentTimeMillis();
+            }
+            // vip 留空/auto 时跟随端点 IP：公网 IP 变了，拦截规则也要跟着换
+            if (s.vipAuto && !ip.equals(s.vip)) {
+                String old = s.vip;
+                s.vip = ip;
+                log("[" + s.name + "] 拦截地址跟随端点: " + (old == null || old.isEmpty() ? "(空)" : old) + " → " + ip);
+            }
         } catch (Throwable t) {
             log("[" + s.name + "] 查询 TXT 失败: " + t);
         }
@@ -324,7 +332,9 @@ public final class Main {
                 if (s.proto.isEmpty()) s.proto = "tcp";
                 s.txt = nz(Json.s(sm.get("txt")));
                 s.key = nz(Json.s(sm.get("key")));
-                if (s.name.isEmpty() || s.vip.isEmpty() || s.port <= 0) continue;
+                s.vipAuto = s.vip.isEmpty() || s.vip.equalsIgnoreCase("auto") || s.vip.equals("@");
+                if (s.name.isEmpty() || s.port <= 0) continue;
+                if (!s.vipAuto && s.vip.isEmpty()) continue;
                 Service old = services.get(s.name);
                 if (old != null) {
                     s.curIp = old.curIp;
@@ -437,7 +447,8 @@ public final class Main {
     static final class Service {
         String name;
         String domain;   // 可选：应用访问用的域名
-        String vip;      // 回环地址 127.0.0.x
+        String vip;      // 拦截目标：固定 IP，或留空/auto 表示跟随 TXT 里的 IP
+        boolean vipAuto; // vip 是否跟随端点 IP
         int port;        // 应用访问的端口（保持原端口，便于客户端无感）
         String proto = "tcp";
         String txt;      // TXT 记录名
@@ -459,7 +470,9 @@ public final class Main {
             if (f.length > 4 && !f[4].trim().isEmpty()) s.proto = f[4].trim();
             if (f.length > 5) s.txt = f[5].trim();
             if (f.length > 6) s.key = f[6].trim();
-            if (s.name.isEmpty() || s.vip.isEmpty()) return null;
+            s.vipAuto = s.vip.isEmpty() || s.vip.equalsIgnoreCase("auto") || s.vip.equals("@");
+            if (s.name.isEmpty()) return null;
+            if (!s.vipAuto && s.vip.isEmpty()) return null;
             return s;
         }
     }

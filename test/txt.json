@@ -1,4 +1,4 @@
 {
-  "_test.eta.local": "v=1 ip=9.9.9.9 port=53",
-  "_stun.example.com": "v=1 ssh=1.1.1.1:53 smb=9.9.9.9:53"
+  "stun.niyilu.top": "5.6.7.8:5678",
+  "open.niyilu.top": "9.9.9.9:9999"
 }
