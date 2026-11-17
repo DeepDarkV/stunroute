@@ -30,3 +30,8 @@ setsid nohup /system/bin/app_process \
   -Djava.class.path="$MODDIR/bin/stunroute.dex" \
   /system/bin com.eta.stunroute.Main "$DATA" "$MODDIR" \
   >> "$LOG" 2>&1 &
+
+# 看门狗：daemon 挂了 30 秒内拉起
+if ! pgrep -f "$MODDIR/watchdog.sh" >/dev/null 2>&1; then
+  setsid nohup /system/bin/sh "$MODDIR/watchdog.sh" >> "$DATA/logs/watchdog.log" 2>&1 &
+fi

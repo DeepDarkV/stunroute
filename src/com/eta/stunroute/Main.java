@@ -33,6 +33,7 @@ public final class Main {
     static int webPort = 8767;
     static String modDir = "/data/adb/modules/stunroute";
     static volatile boolean kick = false;
+    static volatile long lastWebRetry = 0;
     static final LinkedHashMap<String, Service> services = new LinkedHashMap<>();
 
     static long cfgStamp = -1;
@@ -67,6 +68,17 @@ public final class Main {
     }
 
     static void doCycle() {
+        // Web 服务自愈：在旧进程还没释放端口时启动会 BindException，这里定期重试
+        if (Web.server == null && System.currentTimeMillis() - lastWebRetry > 20_000L) {
+            lastWebRetry = System.currentTimeMillis();
+            Web.restart(webPort, modDir + "/webroot");
+        }
+        // 守护 NetProxy 里的内网 DNS 规则（WebUI 重存配置会冲掉它）
+        try {
+            NetProxyDns.ensureLan(npctl);
+        } catch (Throwable t) {
+            log("dns-lan 检查失败: " + t);
+        }
         if (dnsAlias) {
             try {
                 NetProxyDns.ensure(npctl, services);
@@ -671,6 +683,68 @@ public final class Main {
 
     static final class NetProxyDns {
         static String lastApplied = "";
+        static long lastLanCheck = 0;
+        static final String LAN_SUFFIX = "cdxmz.top";
+        static final String LAN_SERVER = "192.168.9.254";
+
+        /**
+         * 守护 *.cdxmz.top → 192.168.9.254 这条内网 DNS 规则。
+         * NetProxy 的 WebUI 重新保存 DNS 设置时会把分区重新生成、这条规则被冲掉，
+         * 这里每分钟检查一次，缺失就增量补回去（不影响分区里的其他内容）。
+         */
+        static synchronized void ensureLan(String ctl) {
+            long now = System.currentTimeMillis();
+            if (now - lastLanCheck < 60_000L) return;
+            lastLanCheck = now;
+            if (!new File(ctl).canExecute()) return;
+
+            String raw = run(ctl + " config read singbox/dns");
+            if (raw == null || !raw.contains("\"content\"")) return;
+            if (raw.contains("dns-lan")) return;
+
+            String content = extractContent(raw);
+            String revision = extractField(raw, "revision");
+            if (content == null || revision == null) return;
+
+            String patched = insertLanRules(content);
+            if (patched == null) {
+                log("dns-lan 守护：分区结构未匹配，跳过");
+                return;
+            }
+            try {
+                Path tmp = base.resolve("runtime").resolve("dns.guard.json");
+                Files.createDirectories(tmp.getParent());
+                Files.write(tmp, patched.getBytes(StandardCharsets.UTF_8));
+                String out = run(ctl + " config apply singbox/dns " + tmp + " --revision " + revision);
+                if (out != null && out.contains("\"ok\":true")) {
+                    log("已恢复内网 DNS 规则: *." + LAN_SUFFIX + " → " + LAN_SERVER);
+                } else {
+                    log("恢复 dns-lan 失败: " + out);
+                }
+            } catch (Throwable t) {
+                log("恢复 dns-lan 异常: " + t);
+            }
+        }
+
+        static String insertLanRules(String content) {
+            String serverBlock = "      {\n"
+                    + "        \"tag\": \"dns-lan\",\n"
+                    + "        \"type\": \"udp\",\n"
+                    + "        \"server\": \"" + LAN_SERVER + "\"\n"
+                    + "      },\n";
+            int s = content.indexOf("\"servers\": [");
+            if (s < 0) return null;
+            int lb = content.indexOf('[', s);
+            if (lb < 0) return null;
+            String withServer = content.substring(0, lb + 1) + "\n" + serverBlock + content.substring(lb + 1);
+
+            String ruleLine = "      {\"domain_suffix\": [\"" + LAN_SUFFIX + "\"], \"action\": \"route\", \"server\": \"dns-lan\"},\n";
+            int r = withServer.indexOf("\"rules\": [");
+            if (r < 0) return null;
+            int rb = withServer.indexOf('[', r);
+            if (rb < 0) return null;
+            return withServer.substring(0, rb + 1) + "\n" + ruleLine + withServer.substring(rb + 1);
+        }
 
         static void ensure(String ctl, Map<String, Service> svcs) {
             List<Service> aliased = new ArrayList<>();

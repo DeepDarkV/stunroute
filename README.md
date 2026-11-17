@@ -103,6 +103,19 @@ GET  /api/logs?lines=120        日志尾部
 POST /api/action                 {"action":"refresh"|"clean"|"dnsresync"}
 ```
 
+## 自愈与守护
+
+模块里所有"配置过的规则"都由守护进程持续盯着，不会因为 NetProxy 更新 / WebUI 保存 / 进程被杀而丢失：
+
+| 守护对象 | 机制 | 实测恢复时间 |
+|---|---|---|
+| stunroute 进程 | `watchdog.sh` 每 30s 检查，挂了用 `setsid` 拉起 | ≤30s |
+| Web 管理界面 | 端口被旧进程占用导致 bind 失败时，每 20s 重试 | ≤20s |
+| iptables 映射 | 每轮检查 `ETA_STUN` 链是否还在，缺失即重建 | ≤60s |
+| NetProxy 内网 DNS（`*.cdxmz.top → 192.168.9.254`） | 每分钟检查 `singbox/dns` 分区，被冲掉就增量补回 | ≤40s |
+
+开机时 `service.sh` 会先拉起 daemon，再启动 watchdog（单例检查，不会重复启动）。
+
 ## 命令
 
 ```

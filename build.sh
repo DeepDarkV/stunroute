@@ -18,7 +18,7 @@ cp dexout/classes.dex stage/bin/stunroute.dex
 cp module/default-services.conf stage/default-services.conf
 cp README.md stage/README.md
 
-chmod 755 stage/service.sh stage/ctl.sh stage/action.sh stage/customize.sh stage/uninstall.sh
+chmod 755 stage/service.sh stage/ctl.sh stage/action.sh stage/customize.sh stage/uninstall.sh stage/watchdog.sh
 chmod 644 stage/module.prop stage/default-services.conf stage/bin/stunroute.dex
 
 cd stage
