@@ -103,7 +103,11 @@ a{color:var(--accent)}
         </div>
         <div><label>管理端口</label><input id="g_webport" type="number" min="1024" max="65535" placeholder="8767"></div>
       </div>
-      <div class="hint">修改轮询间隔和端口后需重启模块生效。</div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="doExport()">导出配置</button>
+        <button onclick="openImport()">导入配置</button>
+      </div>
+      <div class="hint">导出内容包含全局设置与全部映射，重装模块后可一键恢复。</div>
     </div>
   </section>
 
@@ -164,6 +168,19 @@ a{color:var(--accent)}
     <div class="foot">
       <button class="ghost" onclick="closeNp()">关闭</button>
       <button class="primary" onclick="applyNp()">应用</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ioOverlay">
+  <div class="sheet">
+    <h3 id="ioTitle">导出配置</h3>
+    <div class="hint" id="ioHint" style="margin-bottom:10px"></div>
+    <textarea id="ioText" class="mono" rows="12" style="width:100%;background:var(--card2);border:1px solid var(--line);color:var(--fg);border-radius:9px;padding:9px;font-size:11.5px"></textarea>
+    <input type="file" id="ioFile" accept=".json,application/json" style="margin-top:10px;font-size:12px;color:var(--dim)" onchange="loadImportFile(this)">
+    <div class="foot">
+      <button class="ghost" onclick="closeIo()">关闭</button>
+      <button class="primary" id="ioAction" onclick="ioAction()">复制</button>
     </div>
   </div>
 </div>
@@ -408,6 +425,67 @@ async function loadTxts(){
     }
   }
   box.innerHTML = out.join('');
+}
+
+let ioMode = 'export';
+
+async function doExport(){
+  try{
+    const r = await api('/api/export');
+    ioMode = 'export';
+    $('ioTitle').textContent = '导出配置';
+    $('ioHint').textContent = '复制下面内容保存（或下载），重装模块后导入即可恢复全部映射';
+    $('ioText').value = JSON.stringify(r, null, 2);
+    $('ioText').readOnly = true;
+    $('ioFile').style.display = 'none';
+    $('ioAction').textContent = '复制';
+    $('ioOverlay').classList.add('on');
+  }catch(e){ toast('导出失败: ' + e.message); }
+}
+
+function openImport(){
+  ioMode = 'import';
+  $('ioTitle').textContent = '导入配置';
+  $('ioHint').textContent = '粘贴之前导出的 JSON（或选择文件），导入后立即重建全部映射';
+  $('ioText').value = '';
+  $('ioText').readOnly = false;
+  $('ioFile').style.display = '';
+  $('ioAction').textContent = '导入';
+  $('ioOverlay').classList.add('on');
+}
+
+function closeIo(){ $('ioOverlay').classList.remove('on'); }
+
+function loadImportFile(inp){
+  const f = inp.files && inp.files[0];
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { $('ioText').value = rd.result; };
+  rd.readAsText(f);
+}
+
+async function ioAction(){
+  if(ioMode === 'export'){
+    const t = $('ioText').value;
+    try{
+      await navigator.clipboard.writeText(t);
+      toast('已复制到剪贴板');
+    }catch(e){
+      $('ioText').select();
+      try{ document.execCommand('copy'); toast('已复制'); }catch(e2){ toast('请长按手动复制'); }
+    }
+    return;
+  }
+  const t = $('ioText').value.trim();
+  if(!t){ toast('内容为空'); return; }
+  if(!confirm('导入会覆盖当前全部映射，继续？')) return;
+  try{
+    const r = await api('/api/import', {method:'POST', headers:{'Content-Type':'application/json'}, body: t});
+    if(r.ok){
+      toast('已导入 ' + r.services + ' 条映射');
+      closeIo(); loadState(); loadGlobal();
+    } else toast('导入失败: ' + (r.error || ''));
+  }catch(e){ toast('导入失败: ' + e.message); }
 }
 
 async function loadGlobal(){

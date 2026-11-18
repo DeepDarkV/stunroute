@@ -144,6 +144,16 @@ final class Web {
             case "/api/logs":
                 sendJson(s, "200 OK", logsJson(Json.i(param(query, "lines"), 120)));
                 return;
+            case "/api/export":
+                sendJson(s, "200 OK", Main.exportJson());
+                return;
+            case "/api/import":
+                if ("POST".equalsIgnoreCase(method)) {
+                    sendJson(s, "200 OK", Main.importJson(body));
+                } else {
+                    sendJson(s, "405 Method Not Allowed", "{\"ok\":false}");
+                }
+                return;
             case "/api/global":
                 sendJson(s, "200 OK", Main.globalInfoJson());
                 return;

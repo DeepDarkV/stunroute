@@ -282,6 +282,51 @@ public final class Main {
         return new String[]{host, port};
     }
 
+    // ---------------- 配置导出 / 导入 ----------------
+
+    static String exportJson() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("app", "stunroute");
+        m.put("version", VERSION);
+        m.put("exportedAt", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX").format(new Date()));
+        m.put("globals", globalsMap());
+        List<Object> list = new ArrayList<>();
+        synchronized (services) {
+            for (Service s : services.values()) {
+                Map<String, Object> o = new LinkedHashMap<>();
+                o.put("name", s.name);
+                o.put("domain", nz(s.domain));
+                o.put("vip", s.vipAuto ? "" : nz(s.vip));
+                o.put("port", s.port);
+                o.put("proto", nz(s.proto));
+                o.put("txt", nz(s.txt));
+                o.put("key", nz(s.key));
+                list.add(o);
+            }
+        }
+        m.put("services", list);
+        return Json.stringify(m);
+    }
+
+    static String importJson(String body) {
+        try {
+            Object o = Json.parse(body);
+            if (!(o instanceof Map)) return "{\"ok\":false,\"error\":\"配置不是 JSON 对象\"}";
+            Map<?, ?> m = (Map<?, ?>) o;
+            String app = Json.s(m.get("app"));
+            if (app != null && !"stunroute".equals(app)) {
+                return "{\"ok\":false,\"error\":\"不是 stunroute 的配置\"}";
+            }
+            applyFromWeb(m);
+            int n;
+            synchronized (services) { n = services.size(); }
+            return "{\"ok\":true,\"services\":" + n + "}";
+        } catch (Throwable t) {
+            log("导入配置失败: " + t);
+            return "{\"ok\":false,\"error\":" + Json.stringify(String.valueOf(t)) + "}";
+        }
+    }
+
     // ---------------- 每条映射在 NetProxy 侧的配置 ----------------
 
     /** 该映射在 NetProxy dns 分区里对应的规则（没有域名则返回空串）。 */
