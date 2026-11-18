@@ -795,6 +795,8 @@ public final class Main {
         static long lastLanCheck = 0;
         static final String LAN_SUFFIX = "cdxmz.top";
         static final String LAN_SERVER = "192.168.9.254";
+        /** 必须走公网解析的例外（VPN 服务端地址，内网 DNS 在 VPN 未连时不可达）。 */
+        static final String PUBLIC_EXCEPTION = "vpn6.cdxmz.top";
 
         /**
          * 守护 *.cdxmz.top → 192.168.9.254 这条内网 DNS 规则。
@@ -809,7 +811,7 @@ public final class Main {
 
             String raw = run(ctl + " config read singbox/dns");
             if (raw == null || !raw.contains("\"content\"")) return;
-            if (raw.contains("dns-lan")) return;
+            if (raw.contains("dns-lan") && raw.contains(PUBLIC_EXCEPTION)) return;
 
             String content = extractContent(raw);
             String revision = extractField(raw, "revision");
@@ -835,7 +837,44 @@ public final class Main {
             }
         }
 
+        @SuppressWarnings("unchecked")
         static String insertLanRules(String content) {
+            // vpn6.cdxmz.top 是公网 VPN 入口，VPN 没连时内网 DNS 不可达，
+            // 必须在后缀规则之前放一条例外，否则"连 VPN 得先解析 VPN 地址"死循环。
+            try {
+                Object parsed = Json.parse(content);
+                if (!(parsed instanceof Map)) return null;
+                Map<String, Object> root = (Map<String, Object>) parsed;
+                Map<String, Object> dns = (Map<String, Object>) root.get("dns");
+                if (dns == null) return null;
+                List<Object> rules = (List<Object>) dns.get("rules");
+                if (rules == null) {
+                    rules = new ArrayList<>();
+                    dns.put("rules", rules);
+                }
+                rules.removeIf(r -> {
+                    String t = Json.stringify(r);
+                    return t.contains("cdxmz.top");
+                });
+                Map<String, Object> lan = new LinkedHashMap<>();
+                lan.put("domain_suffix", Collections.singletonList(LAN_SUFFIX));
+                lan.put("action", "route");
+                lan.put("server", "dns-lan");
+                rules.add(0, lan);
+
+                Map<String, Object> ex = new LinkedHashMap<>();
+                ex.put("domain", Collections.singletonList(PUBLIC_EXCEPTION));
+                ex.put("action", "route");
+                ex.put("server", "dns-direct");
+                rules.add(0, ex);
+
+                return Json.stringify(root);
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+
+        static String insertLanRulesLegacy(String content) {
             String serverBlock = "      {\n"
                     + "        \"tag\": \"dns-lan\",\n"
                     + "        \"type\": \"udp\",\n"
