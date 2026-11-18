@@ -146,6 +146,21 @@ a{color:var(--accent)}
   </div>
 </div>
 
+<div class="overlay" id="npOverlay">
+  <div class="sheet">
+    <h3 id="npTitle">NetProxy 配置</h3>
+    <div class="hint" id="npStatus" style="margin-bottom:10px"></div>
+    <label>DNS 规则（JSON，可直接编辑）</label>
+    <textarea id="npRule" class="mono" rows="5" style="width:100%;background:var(--card2);border:1px solid var(--line);color:var(--fg);border-radius:9px;padding:9px;font-size:12px"></textarea>
+    <label style="margin-top:12px">等价命令（只读）</label>
+    <pre class="log" id="npScript" style="max-height:170px"></pre>
+    <div class="foot">
+      <button class="ghost" onclick="closeNp()">关闭</button>
+      <button class="primary" onclick="applyNp()">应用</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -242,6 +257,7 @@ function renderServices(){
       <div class="svc-line" style="font-size:12px">TXT ${esc(s.txt || '-')}${s.key ? ' · key=' + esc(s.key) : ''}</div>
       <div class="svc-actions">
         <button class="sm" onclick="queryOne(${i})">查 TXT</button>
+        <button class="sm" onclick="openNp(${i})">NetProxy</button>
         <button class="sm" onclick="openEditor(${i})">编辑</button>
         <button class="sm danger" onclick="delService(${i})">删除</button>
       </div>
@@ -282,6 +298,42 @@ function openEditor(i){
 }
 
 function closeEditor(){ $('overlay').classList.remove('on'); }
+
+// ---- NetProxy 规则查看/编辑 ----
+let npName = '';
+
+async function openNp(i){
+  const s = state.services[i];
+  npName = s.name;
+  try{
+    const r = await api('/api/np?name=' + encodeURIComponent(s.name));
+    $('npTitle').textContent = 'NetProxy 配置 · ' + s.name;
+    $('npRule').value = r.rule || '';
+    $('npScript').textContent = r.script || '';
+    if(!r.domain){
+      $('npStatus').innerHTML = '该映射没有配置域名，<b>不涉及 NetProxy 配置</b>（只做 iptables DNAT）';
+    }else if(r.present){
+      $('npStatus').innerHTML = '✓ 规则已在 <code>singbox/dns</code> 分区中（域名 ' + esc(r.domain) + '）';
+    }else{
+      $('npStatus').innerHTML = '<span style="color:var(--warn)">⚠ 规则尚未写入 dns 分区</span>（域名 ' + esc(r.domain) + '）';
+    }
+    $('npOverlay').classList.add('on');
+  }catch(e){ toast('读取失败: ' + e.message); }
+}
+
+function closeNp(){ $('npOverlay').classList.remove('on'); }
+
+async function applyNp(){
+  if(!npName) return;
+  if(!confirm('将把这条规则写入 NetProxy 的 dns 分区（同域名的旧规则会被替换），继续？')) return;
+  try{
+    const r = await api('/api/np', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name: npName, rule: $('npRule').value})});
+    if(r.ok){ toast('已写入 NetProxy'); closeNp(); loadState(); }
+    else toast('失败: ' + (r.error || '未知错误'));
+  }catch(e){ toast('失败: ' + e.message); }
+}
+
 
 function nextVip(){
   let n = 10;

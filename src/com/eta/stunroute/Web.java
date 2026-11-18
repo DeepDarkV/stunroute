@@ -144,6 +144,22 @@ final class Web {
             case "/api/logs":
                 sendJson(s, "200 OK", logsJson(Json.i(param(query, "lines"), 120)));
                 return;
+            case "/api/np":
+                if ("POST".equalsIgnoreCase(method)) {
+                    try {
+                        Object o = Json.parse(body);
+                        String name = Json.s(Json.get(o, "name"));
+                        String rule = Json.s(Json.get(o, "rule"));
+                        sendJson(s, "200 OK", Main.applyNpRule(name, rule));
+                    } catch (Throwable t) {
+                        sendJson(s, "200 OK", "{\"ok\":false,\"error\":" + Json.stringify(String.valueOf(t)) + "}");
+                    }
+                    return;
+                } else {
+                    String info = Main.npInfoJson(param(query, "name"));
+                    sendJson(s, "200 OK", info == null ? "{\"ok\":false,\"error\":\"未知服务\"}" : info);
+                    return;
+                }
             case "/api/config":
                 if ("POST".equalsIgnoreCase(method)) {
                     try {

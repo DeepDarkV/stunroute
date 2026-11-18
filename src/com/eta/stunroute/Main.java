@@ -282,6 +282,102 @@ public final class Main {
         return new String[]{host, port};
     }
 
+    // ---------------- 每条映射在 NetProxy 侧的配置 ----------------
+
+    /** 该映射在 NetProxy dns 分区里对应的规则（没有域名则返回空串）。 */
+    static String describeNpRule(Service s) {
+        if (s == null || s.domain == null || s.domain.isEmpty()) return "";
+        String vip = (s.vip == null || s.vip.isEmpty()) ? "127.0.0.1" : s.vip;
+        return "{\"domain\": [\"" + s.domain + "\"], \"action\": \"predefined\", \"answer\": [\""
+                + s.domain + ". IN A " + vip + "\"]}";
+    }
+
+    static String buildNpScript(Service s, String rule) {
+        if (rule == null || rule.isEmpty()) {
+            return "# 该映射未配置域名，不需要修改 NetProxy\n"
+                    + "# 只做 iptables DNAT（拦截 " + nz(s.vip) + ":" + s.port + " → TXT 端点）";
+        }
+        return "# 把下面这条规则加入 singbox/dns 的 rules（放在最前面）\n"
+                + rule + "\n\n"
+                + "NP=" + npctl + "\n"
+                + "$NP config read singbox/dns > /tmp/dns.raw.json\n"
+                + "# 提取 data.content 并插入上面的规则后：\n"
+                + "$NP config apply singbox/dns /tmp/dns.json --revision <上一步的 revision>\n\n"
+                + "# 也可以用本页的「应用」按钮，由守护进程直接写入";
+    }
+
+    static String npInfoJson(String name) {
+        Service s;
+        synchronized (services) {
+            s = services.get(name);
+        }
+        if (s == null) return null;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", s.name);
+        m.put("domain", nz(s.domain));
+        m.put("vip", nz(s.vip));
+        m.put("vipAuto", s.vipAuto);
+        String rule = describeNpRule(s);
+        m.put("rule", rule);
+        m.put("script", buildNpScript(s, rule));
+        boolean present = false;
+        if (s.domain != null && !s.domain.isEmpty()) {
+            String raw = NetProxyDns.run(npctl + " config read singbox/dns");
+            present = raw != null && raw.contains(s.domain);
+        }
+        m.put("present", present);
+        return Json.stringify(m);
+    }
+
+    /** 把编辑后的规则写入 NetProxy 的 dns 分区（同一域名的旧规则会被替换）。 */
+    @SuppressWarnings("unchecked")
+    static synchronized String applyNpRule(String name, String ruleText) {
+        Service s;
+        synchronized (services) {
+            s = services.get(name);
+        }
+        if (s == null) return "{\"ok\":false,\"error\":\"未知服务\"}";
+        if (s.domain == null || s.domain.isEmpty()) return "{\"ok\":false,\"error\":\"该映射没有域名\"}";
+
+        String raw = NetProxyDns.run(npctl + " config read singbox/dns");
+        if (raw == null) return "{\"ok\":false,\"error\":\"读取 dns 分区失败\"}";
+        String content = NetProxyDns.extractContent(raw);
+        String revision = NetProxyDns.extractField(raw, "revision");
+        if (content == null || revision == null) return "{\"ok\":false,\"error\":\"解析 dns 分区失败\"}";
+
+        try {
+            Object parsed = Json.parse(content);
+            Map<String, Object> root = (Map<String, Object>) parsed;
+            Map<String, Object> dns = (Map<String, Object>) root.get("dns");
+            if (dns == null) return "{\"ok\":false,\"error\":\"分区没有 dns 节点\"}";
+            List<Object> rules = (List<Object>) dns.get("rules");
+            if (rules == null) {
+                rules = new ArrayList<>();
+                dns.put("rules", rules);
+            }
+            final String domain = s.domain;
+            rules.removeIf(r -> {
+                String t = Json.stringify(r);
+                return t.contains("\"" + domain + "\"");
+            });
+            if (ruleText != null && !ruleText.trim().isEmpty()) {
+                Object nr = Json.parse(ruleText);
+                if (!(nr instanceof Map)) return "{\"ok\":false,\"error\":\"规则不是合法 JSON 对象\"}";
+                rules.add(0, nr);
+            }
+            Path tmp = base.resolve("runtime").resolve("dns.np.json");
+            Files.createDirectories(tmp.getParent());
+            Files.write(tmp, Json.stringify(root).getBytes(StandardCharsets.UTF_8));
+            String out = NetProxyDns.run(npctl + " config apply singbox/dns " + tmp + " --revision " + revision);
+            boolean ok = out != null && out.contains("\"ok\":true");
+            log("NetProxy 规则已更新: " + name + " (" + domain + ") ok=" + ok);
+            return "{\"ok\":" + ok + "}";
+        } catch (Throwable t) {
+            log("应用 NetProxy 规则失败: " + t);
+            return "{\"ok\":false,\"error\":" + Json.stringify(String.valueOf(t)) + "}";
+        }
+    }
+
     // ---------------- Web 配置接口 ----------------
 
     static Map<String, Object> globalsMap() {
