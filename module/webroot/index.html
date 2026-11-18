@@ -108,11 +108,10 @@ a{color:var(--accent)}
         <button onclick="openImport()">导入配置</button>
       </div>
       <div class="row" style="margin-top:10px">
-        <div><label>内网 DNS 后缀（逗号分隔）</label><input id="g_lansuffix" class="mono" placeholder="cdxmz.top,corp.lan"></div>
-        <div><label>内网 DNS 服务器</label><input id="g_lanserver" class="mono" placeholder="192.168.9.254"></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <div class="full"><label>公网解析例外（逗号分隔，不走内网 DNS）</label><input id="g_lanexception" class="mono" placeholder="vpn6.cdxmz.top,vpn.cdxmz.top"></div>
+        <div class="full">
+          <label>内网 DNS 组（每行一组：后缀1,后缀2 | 服务器 | 例外1,例外2）</label>
+          <textarea id="g_langroups" class="mono" rows="3" style="width:100%;background:var(--card2);border:1px solid var(--line);color:var(--fg);border-radius:9px;padding:9px;font-size:12px" placeholder="cdxmz.top|192.168.9.254|vpn6.cdxmz.top"></textarea>
+        </div>
       </div>
       <div class="hint">内网 DNS 规则由守护进程自动维护，参数会随配置一起导出/导入。</div>
       <div class="hint">导出内容包含全局设置与全部映射，重装模块后可一键恢复。</div>
@@ -256,9 +255,9 @@ async function loadState(){
   $('g_interval').value = g.interval || 60;
   $('g_alias').value = String(g.dns_alias ? 1 : 0);
   $('g_webport').value = g.web_port || 8767;
-  $('g_lansuffix').value = g.lan_dns_suffix || '';
-  $('g_lanserver').value = g.lan_dns_server || '';
-  $('g_lanexception').value = g.lan_dns_exception || '';
+  const lg = (g.lan_groups || []).map(x =>
+    (x.suffixes || []).join(',') + '|' + (x.server || '') + '|' + (x.exceptions || []).join(','));
+  $('g_langroups').value = lg.join('\n');
   renderServices();
   $('dot').className = 'dot' + (state.running ? ' on' : '');
   $('hmeta').textContent = (state.running ? '运行中' : '未运行') + ' · ' + (state.services || []).length + ' 个服务';
@@ -300,15 +299,21 @@ function renderServices(){
   }).join('');
 }
 
+function parseLanGroups(text){
+  const split = v => (v || '').split(/[,，\s]+/).map(x => x.trim()).filter(Boolean);
+  return (text || '').split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    const p = line.split('|');
+    return { suffixes: split(p[0]), server: (p[1] || '').trim(), exceptions: split(p[2] || '') };
+  }).filter(x => x.suffixes.length && x.server);
+}
+
 async function saveGlobal(){
   state.globals = {
     dns_server: $('g_dns').value.trim(),
     interval: parseInt($('g_interval').value) || 60,
     dns_alias: $('g_alias').value === '1',
     web_port: parseInt($('g_webport').value) || 8767,
-    lan_dns_suffix: $('g_lansuffix').value.trim(),
-    lan_dns_server: $('g_lanserver').value.trim(),
-    lan_dns_exception: $('g_lanexception').value.trim()
+    lan_groups: parseLanGroups($('g_langroups').value)
   };
   await pushConfig('全局设置已保存');
 }

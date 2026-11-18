@@ -98,8 +98,16 @@ http://127.0.0.1:8767/
   导出为一份 JSON（`app` / `version` / `globals` / `services`），可复制或另存；
   导入支持粘贴或选择文件，写入后立即重建全部映射（iptables、DNS 别名）。
   重装模块后导入一次即可恢复所有映射，不用重新配——NetProxy 本身需先装好。
-  **内网 DNS 的三个参数也在 `globals` 里**（`lan_dns_suffix` / `lan_dns_server` / `lan_dns_exception`），
-  导入后会按新参数重建 `dns-lan` server 与规则，不用手工去 NetProxy 里改。
+  **内网 DNS 支持多组**（`#lan_dns=` 每行一组，格式 `后缀1,后缀2|服务器|例外1,例外2`）：
+
+  ```
+  #lan_dns=cdxmz.top|192.168.9.254|vpn6.cdxmz.top
+  #lan_dns=corp.lan,lan|10.0.0.53|
+  ```
+
+  每组会生成独立的 `dns-lan` / `dns-lan-1` … server 与后缀规则，例外统一走 `dns-direct`；
+  删掉某一组后，对应的 server 和规则会自动清理。这些参数都在 `globals.lan_groups` 里，
+  随导出/导入一起走。
 - **全局改动**：模块对系统做的、不属于某条映射的修改都列在这里——
   NetProxy `singbox/dns` 的守护规则（`dns-lan` server、`vpn6.cdxmz.top` 公网例外、`cdxmz.top` 后缀路由）、
   两条 iptables 链的完整内容、OUTPUT/POSTROUTING 挂载状态、服务数与看门狗状态；

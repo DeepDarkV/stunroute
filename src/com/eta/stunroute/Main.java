@@ -36,6 +36,46 @@ public final class Main {
     static volatile long lastWebRetry = 0;
     static final LinkedHashMap<String, Service> services = new LinkedHashMap<>();
 
+    /** 内网 DNS 组：一组 = 若干后缀 → 一个服务器，另有若干公网解析例外。 */
+    static final class LanGroup {
+        final List<String> suffixes = new ArrayList<>();
+        String server = "";
+        final List<String> exceptions = new ArrayList<>();
+        int index = 0;
+
+        String tag() {
+            return index == 0 ? "dns-lan" : "dns-lan-" + index;
+        }
+
+        String toLine() {
+            return String.join(",", suffixes) + "|" + server + "|" + String.join(",", exceptions);
+        }
+
+        static LanGroup parse(String line, int idx) {
+            String[] f = line.split("\\|", -1);
+            if (f.length < 2) return null;
+            LanGroup g = new LanGroup();
+            g.index = idx;
+            for (String x : splitCsv(f[0])) g.suffixes.add(x);
+            g.server = f[1].trim();
+            if (f.length > 2) for (String x : splitCsv(f[2])) g.exceptions.add(x);
+            if (g.suffixes.isEmpty() || g.server.isEmpty()) return null;
+            return g;
+        }
+    }
+
+    static final List<LanGroup> lanGroups = new ArrayList<>();
+
+    static List<String> splitCsv(String v) {
+        List<String> out = new ArrayList<>();
+        if (v == null) return out;
+        for (String p : v.split("[,，\\s]+")) {
+            String t = p.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
     static String lanSuffix = "cdxmz.top";
     static String lanServer = "192.168.9.254";
     static String lanException = "vpn6.cdxmz.top";
@@ -118,6 +158,7 @@ public final class Main {
             boolean alias = dnsAlias;
             String ctl = npctl;
             int wp = webPort;
+            List<String> lanLines = new ArrayList<>();
             String lanS = lanSuffix;
             String lanV = lanServer;
             String lanE = lanException;
@@ -145,6 +186,7 @@ public final class Main {
                     else if (c.startsWith("lan_dns_suffix=")) lanS = c.substring(15).trim();
                     else if (c.startsWith("lan_dns_server=")) lanV = c.substring(15).trim();
                     else if (c.startsWith("lan_dns_exception=")) lanE = c.substring(18).trim();
+                    else if (c.startsWith("lan_dns=")) lanLines.add(c.substring(8).trim());
                     continue;
                 }
                 Service s = Service.parse(line);
@@ -159,6 +201,25 @@ public final class Main {
             if (!lanS.isEmpty()) lanSuffix = lanS;
             if (!lanV.isEmpty()) lanServer = lanV;
             if (!lanE.isEmpty()) lanException = lanE;
+
+            // 多组优先；没有 lan_dns 行时用旧的三个单值键构造一组
+            List<LanGroup> groups = new ArrayList<>();
+            for (String line : lanLines) {
+                LanGroup g = LanGroup.parse(line, groups.size());
+                if (g != null) groups.add(g);
+            }
+            if (groups.isEmpty() && !lanServer.isEmpty() && !lanSuffix.isEmpty()) {
+                LanGroup g = new LanGroup();
+                g.index = 0;
+                g.suffixes.addAll(splitCsv(lanSuffix));
+                g.server = lanServer;
+                g.exceptions.addAll(splitCsv(lanException));
+                if (!g.suffixes.isEmpty()) groups.add(g);
+            }
+            synchronized (lanGroups) {
+                lanGroups.clear();
+                lanGroups.addAll(groups);
+            }
             synchronized (services) {
                 LinkedHashMap<String, Service> merged = new LinkedHashMap<>();
                 for (Service s : next.values()) {
@@ -513,6 +574,17 @@ public final class Main {
         m.put("lan_dns_suffix", lanSuffix);
         m.put("lan_dns_server", lanServer);
         m.put("lan_dns_exception", lanException);
+        List<Object> groupsArr = new ArrayList<>();
+        List<LanGroup> gs;
+        synchronized (lanGroups) { gs = new ArrayList<>(lanGroups); }
+        for (LanGroup g : gs) {
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("suffixes", new ArrayList<>(g.suffixes));
+            o.put("server", g.server);
+            o.put("exceptions", new ArrayList<>(g.exceptions));
+            groupsArr.add(o);
+        }
+        m.put("lan_groups", groupsArr);
         return m;
     }
 
@@ -535,6 +607,30 @@ public final class Main {
             }
             interval = Math.max(10, Json.i(gm.get("interval"), interval));
             dnsAlias = Json.b(gm.get("dns_alias"), dnsAlias);
+            Object lg = gm.get("lan_groups");
+            if (lg instanceof List && !((List<?>) lg).isEmpty()) {
+                List<LanGroup> parsed = new ArrayList<>();
+                for (Object o : (List<?>) lg) {
+                    if (!(o instanceof Map)) continue;
+                    Map<?, ?> gmap = (Map<?, ?>) o;
+                    LanGroup ng = new LanGroup();
+                    ng.index = parsed.size();
+                    Object sfx = gmap.get("suffixes");
+                    if (sfx instanceof List) for (Object x : (List<?>) sfx) if (x != null) ng.suffixes.add(String.valueOf(x));
+                    ng.server = nz(Json.s(gmap.get("server")));
+                    Object exs = gmap.get("exceptions");
+                    if (exs instanceof List) for (Object x : (List<?>) exs) if (x != null) ng.exceptions.add(String.valueOf(x));
+                    if (!ng.suffixes.isEmpty() && !ng.server.isEmpty()) parsed.add(ng);
+                }
+                if (!parsed.isEmpty()) {
+                    synchronized (lanGroups) {
+                        lanGroups.clear();
+                        lanGroups.addAll(parsed);
+                    }
+                    // 触发下一轮立即核对
+                    NetProxyDns.lastLanCheck = 0;
+                }
+            }
             String ls = Json.s(gm.get("lan_dns_suffix"));
             if (ls != null && !ls.trim().isEmpty()) lanSuffix = ls.trim();
             String lv = Json.s(gm.get("lan_dns_server"));
@@ -599,9 +695,15 @@ public final class Main {
         b.append("#dns_alias=").append(dnsAlias ? 1 : 0).append('\n');
         b.append("#netproxyctl=").append(npctl).append('\n');
         b.append("#web_port=").append(webPort).append('\n');
-        b.append("#lan_dns_suffix=").append(lanSuffix).append('\n');
-        b.append("#lan_dns_server=").append(lanServer).append('\n');
-        b.append("#lan_dns_exception=").append(lanException).append('\n');
+        List<LanGroup> gs;
+        synchronized (lanGroups) { gs = new ArrayList<>(lanGroups); }
+        if (gs.isEmpty()) {
+            b.append("#lan_dns=").append(lanSuffix).append('|').append(lanServer).append('|').append(lanException).append('\n');
+        } else {
+            for (LanGroup g : gs) {
+                b.append("#lan_dns=").append(g.toLine()).append('\n');
+            }
+        }
         b.append("#\n# 格式: 名称|域名|回环地址|端口|协议|TXT记录名|键\n");
         for (Service s : svcs) {
             b.append(nz(s.name)).append('|')
@@ -960,7 +1062,14 @@ public final class Main {
                 Files.write(tmp, patched.getBytes(StandardCharsets.UTF_8));
                 String out = run(ctl + " config apply singbox/dns " + tmp + " --revision " + revision);
                 if (out != null && out.contains("\"ok\":true")) {
-                    log("已恢复内网 DNS 规则: *." + lanSuffix + " → " + lanServer);
+                    StringBuilder sb = new StringBuilder();
+                    List<LanGroup> gs;
+                    synchronized (lanGroups) { gs = new ArrayList<>(lanGroups); }
+                    for (LanGroup g : gs) {
+                        if (sb.length() > 0) sb.append("; ");
+                        sb.append(String.join(",", g.suffixes)).append(" → ").append(g.server);
+                    }
+                    log("已恢复内网 DNS 规则: " + sb);
                 } else {
                     log("恢复 dns-lan 失败: " + out);
                 }
@@ -990,42 +1099,54 @@ public final class Main {
             return true;
         }
 
-        /** server 定义、后缀规则、例外规则三者齐全才算就位。 */
+        /** 每一组都要有 server 定义、后缀规则、例外规则（无例外则跳过）才算就位。 */
         @SuppressWarnings("unchecked")
         static boolean lanPresent(String content) {
             try {
+                List<LanGroup> groups;
+                synchronized (lanGroups) { groups = new ArrayList<>(lanGroups); }
+                if (groups.isEmpty()) return true;
                 Object parsed = Json.parse(content);
                 if (!(parsed instanceof Map)) return false;
                 Map<String, Object> root = (Map<String, Object>) parsed;
                 Map<String, Object> dns = (Map<String, Object>) root.get("dns");
                 if (dns == null) return false;
-                boolean hasServer = false;
                 List<Object> servers = (List<Object>) dns.get("servers");
-                if (servers != null) {
+                List<Object> rules = (List<Object>) dns.get("rules");
+                if (servers == null || rules == null) return false;
+
+                // 多余的 dns-lan* server（组被删掉后残留）也要触发重建
+                int lanSrvCount = 0;
+                for (Object o : servers) {
+                    if (o instanceof Map
+                            && String.valueOf(((Map<?, ?>) o).get("tag")).startsWith("dns-lan")) {
+                        lanSrvCount++;
+                    }
+                }
+                if (lanSrvCount != groups.size()) return false;
+
+                for (LanGroup g : groups) {
+                    boolean srvOk = false;
                     for (Object o : servers) {
-                        if (o instanceof Map && "dns-lan".equals(((Map<?, ?>) o).get("tag"))) {
-                            // 地址也要对得上，参数改了要能重建
-                            hasServer = lanServer.equals(((Map<?, ?>) o).get("server"));
+                        if (o instanceof Map && g.tag().equals(((Map<?, ?>) o).get("tag"))) {
+                            srvOk = g.server.equals(((Map<?, ?>) o).get("server"));
                             break;
                         }
                     }
-                }
-                boolean hasRule = false, hasException = false;
-                List<String> wantSuffix = splitList(lanSuffix);
-                List<String> wantException = splitList(lanException);
-                List<Object> rules = (List<Object>) dns.get("rules");
-                if (rules != null) {
+                    if (!srvOk) return false;
+                    boolean ruleOk = false, exOk = g.exceptions.isEmpty();
                     for (Object o : rules) {
                         if (!(o instanceof Map)) continue;
                         Map<?, ?> r = (Map<?, ?>) o;
-                        if ("dns-lan".equals(r.get("server"))) {
-                            hasRule = sameSet(r.get("domain_suffix"), wantSuffix);
+                        if (g.tag().equals(r.get("server"))) {
+                            ruleOk = sameSet(r.get("domain_suffix"), g.suffixes);
                         } else if ("dns-direct".equals(r.get("server"))) {
-                            hasException = sameSet(r.get("domain"), wantException);
+                            if (sameSet(r.get("domain"), g.exceptions)) exOk = true;
                         }
                     }
+                    if (!ruleOk || !exOk) return false;
                 }
-                return hasServer && hasRule && hasException;
+                return true;
             } catch (Throwable t) {
                 return false;
             }
@@ -1033,54 +1154,48 @@ public final class Main {
 
         @SuppressWarnings("unchecked")
         static String insertLanRules(String content) {
-            // vpn6.cdxmz.top 是公网 VPN 入口，VPN 没连时内网 DNS 不可达，
-            // 必须在后缀规则之前放一条例外，否则"连 VPN 得先解析 VPN 地址"死循环。
             try {
+                List<LanGroup> groups;
+                synchronized (lanGroups) { groups = new ArrayList<>(lanGroups); }
                 Object parsed = Json.parse(content);
                 if (!(parsed instanceof Map)) return null;
                 Map<String, Object> root = (Map<String, Object>) parsed;
                 Map<String, Object> dns = (Map<String, Object>) root.get("dns");
                 if (dns == null) return null;
 
-                // 1) 保证 dns-lan server 存在（可能被 WebUI 重存时冲掉）
                 List<Object> servers = (List<Object>) dns.get("servers");
-                if (servers == null) {
-                    servers = new ArrayList<>();
-                    dns.put("servers", servers);
-                }
-                final String tag = "dns-lan";
-                servers.removeIf(o -> o instanceof Map && tag.equals(((Map<?, ?>) o).get("tag")));
-                Map<String, Object> srv = new LinkedHashMap<>();
-                srv.put("tag", tag);
-                srv.put("type", "udp");
-                srv.put("server", lanServer);
-                servers.add(srv);
-
-                // 2) 规则
+                if (servers == null) { servers = new ArrayList<>(); dns.put("servers", servers); }
                 List<Object> rules = (List<Object>) dns.get("rules");
-                if (rules == null) {
-                    rules = new ArrayList<>();
-                    dns.put("rules", rules);
-                }
-                rules.removeIf(r -> {
-                    String t = Json.stringify(r);
-                    return t.contains("cdxmz.top");
-                });
-                Map<String, Object> lan = new LinkedHashMap<>();
-                lan.put("domain_suffix", splitList(lanSuffix));
-                lan.put("action", "route");
-                lan.put("server", "dns-lan");
-                rules.add(0, lan);
+                if (rules == null) { rules = new ArrayList<>(); dns.put("rules", rules); }
 
-                Map<String, Object> ex = new LinkedHashMap<>();
-                List<String> exList = splitList(lanException);
-                if (!exList.isEmpty()) {
-                    ex.put("domain", exList);
-                    ex.put("action", "route");
-                    ex.put("server", "dns-direct");
-                    rules.add(0, ex);
-                }
+                servers.removeIf(o -> o instanceof Map
+                        && String.valueOf(((Map<?, ?>) o).get("tag")).startsWith("dns-lan"));
+                Set<String> tags = new HashSet<>();
+                for (LanGroup g : groups) tags.add(g.tag());
+                rules.removeIf(o -> o instanceof Map && tags.contains(String.valueOf(((Map<?, ?>) o).get("server"))));
 
+                for (int i = groups.size() - 1; i >= 0; i--) {
+                    LanGroup g = groups.get(i);
+                    Map<String, Object> srv = new LinkedHashMap<>();
+                    srv.put("tag", g.tag());
+                    srv.put("type", "udp");
+                    srv.put("server", g.server);
+                    servers.add(srv);
+
+                    Map<String, Object> lan = new LinkedHashMap<>();
+                    lan.put("domain_suffix", new ArrayList<>(g.suffixes));
+                    lan.put("action", "route");
+                    lan.put("server", g.tag());
+                    rules.add(0, lan);
+
+                    if (!g.exceptions.isEmpty()) {
+                        Map<String, Object> ex = new LinkedHashMap<>();
+                        ex.put("domain", new ArrayList<>(g.exceptions));
+                        ex.put("action", "route");
+                        ex.put("server", "dns-direct");
+                        rules.add(0, ex);
+                    }
+                }
                 return Json.stringify(root);
             } catch (Throwable t) {
                 return null;
