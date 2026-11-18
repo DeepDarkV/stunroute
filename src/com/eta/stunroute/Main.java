@@ -969,6 +969,27 @@ public final class Main {
             }
         }
 
+        static List<String> splitList(String v) {
+            List<String> out = new ArrayList<>();
+            if (v == null) return out;
+            for (String p : v.split("[,，\\s]+")) {
+                String t = p.trim();
+                if (!t.isEmpty()) out.add(t);
+            }
+            return out;
+        }
+
+        /** 配置里的列表与规则里的列表必须完全一致（顺序无关）。 */
+        static boolean sameSet(Object actual, List<String> want) {
+            if (!(actual instanceof List)) return false;
+            List<?> list = (List<?>) actual;
+            if (list.size() != want.size()) return false;
+            for (String w : want) {
+                if (!list.contains(w)) return false;
+            }
+            return true;
+        }
+
         /** server 定义、后缀规则、例外规则三者齐全才算就位。 */
         @SuppressWarnings("unchecked")
         static boolean lanPresent(String content) {
@@ -990,12 +1011,18 @@ public final class Main {
                     }
                 }
                 boolean hasRule = false, hasException = false;
+                List<String> wantSuffix = splitList(lanSuffix);
+                List<String> wantException = splitList(lanException);
                 List<Object> rules = (List<Object>) dns.get("rules");
                 if (rules != null) {
                     for (Object o : rules) {
-                        String t = Json.stringify(o);
-                        if (t.contains("dns-lan")) hasRule = true;
-                        if (t.contains(lanException)) hasException = true;
+                        if (!(o instanceof Map)) continue;
+                        Map<?, ?> r = (Map<?, ?>) o;
+                        if ("dns-lan".equals(r.get("server"))) {
+                            hasRule = sameSet(r.get("domain_suffix"), wantSuffix);
+                        } else if ("dns-direct".equals(r.get("server"))) {
+                            hasException = sameSet(r.get("domain"), wantException);
+                        }
                     }
                 }
                 return hasServer && hasRule && hasException;
@@ -1040,16 +1067,19 @@ public final class Main {
                     return t.contains("cdxmz.top");
                 });
                 Map<String, Object> lan = new LinkedHashMap<>();
-                lan.put("domain_suffix", Collections.singletonList(lanSuffix));
+                lan.put("domain_suffix", splitList(lanSuffix));
                 lan.put("action", "route");
                 lan.put("server", "dns-lan");
                 rules.add(0, lan);
 
                 Map<String, Object> ex = new LinkedHashMap<>();
-                ex.put("domain", Collections.singletonList(lanException));
-                ex.put("action", "route");
-                ex.put("server", "dns-direct");
-                rules.add(0, ex);
+                List<String> exList = splitList(lanException);
+                if (!exList.isEmpty()) {
+                    ex.put("domain", exList);
+                    ex.put("action", "route");
+                    ex.put("server", "dns-direct");
+                    rules.add(0, ex);
+                }
 
                 return Json.stringify(root);
             } catch (Throwable t) {

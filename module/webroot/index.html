@@ -108,11 +108,11 @@ a{color:var(--accent)}
         <button onclick="openImport()">导入配置</button>
       </div>
       <div class="row" style="margin-top:10px">
-        <div><label>内网 DNS 后缀</label><input id="g_lansuffix" class="mono" placeholder="cdxmz.top"></div>
+        <div><label>内网 DNS 后缀（逗号分隔）</label><input id="g_lansuffix" class="mono" placeholder="cdxmz.top,corp.lan"></div>
         <div><label>内网 DNS 服务器</label><input id="g_lanserver" class="mono" placeholder="192.168.9.254"></div>
       </div>
       <div class="row" style="margin-top:10px">
-        <div class="full"><label>公网解析例外（这些域名不走内网 DNS）</label><input id="g_lanexception" class="mono" placeholder="vpn6.cdxmz.top"></div>
+        <div class="full"><label>公网解析例外（逗号分隔，不走内网 DNS）</label><input id="g_lanexception" class="mono" placeholder="vpn6.cdxmz.top,vpn.cdxmz.top"></div>
       </div>
       <div class="hint">内网 DNS 规则由守护进程自动维护，参数会随配置一起导出/导入。</div>
       <div class="hint">导出内容包含全局设置与全部映射，重装模块后可一键恢复。</div>
