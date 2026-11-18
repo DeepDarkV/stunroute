@@ -118,6 +118,11 @@ a{color:var(--accent)}
   </section>
 
   <section class="card">
+    <h2>全局改动<span class="sp"></span><button class="sm" onclick="loadGlobal()">刷新</button></h2>
+    <div class="body" id="globalBox"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section class="card">
     <h2>运行日志<span class="sp"></span><button class="sm" onclick="loadLogs()">刷新</button></h2>
     <div class="body"><pre class="log" id="logBox">…</pre></div>
   </section>
@@ -152,6 +157,8 @@ a{color:var(--accent)}
     <div class="hint" id="npStatus" style="margin-bottom:10px"></div>
     <label>DNS 规则（JSON，可直接编辑）</label>
     <textarea id="npRule" class="mono" rows="5" style="width:100%;background:var(--card2);border:1px solid var(--line);color:var(--fg);border-radius:9px;padding:9px;font-size:12px"></textarea>
+    <label style="margin-top:12px">iptables（本条映射）</label>
+    <pre class="log" id="npIptables" style="max-height:120px"></pre>
     <label style="margin-top:12px">等价命令（只读）</label>
     <pre class="log" id="npScript" style="max-height:170px"></pre>
     <div class="foot">
@@ -310,6 +317,10 @@ async function openNp(i){
     $('npTitle').textContent = 'NetProxy 配置 · ' + s.name;
     $('npRule').value = r.rule || '';
     $('npScript').textContent = r.script || '';
+    const ip = r.iptables || {};
+    $('npIptables').textContent = (ip.dnat || ip.masq)
+      ? [ip.dnat || '(DNAT 规则缺失)', ip.masq || '(MASQUERADE 缺失)'].join('\n')
+      : '(规则尚未下发)';
     if(!r.domain){
       $('npStatus').innerHTML = '该映射没有配置域名，<b>不涉及 NetProxy 配置</b>（只做 iptables DNAT）';
     }else if(r.present){
@@ -399,6 +410,25 @@ async function loadTxts(){
   box.innerHTML = out.join('');
 }
 
+async function loadGlobal(){
+  try{
+    const g = await api('/api/global');
+    const dns = g.dns || {};
+    const ok = dns.lanPresent && dns.exceptionPresent;
+    const badge = ok ? '<span class="badge ok">已就位</span>' : '<span class="badge bad">缺失</span>';
+    $('globalBox').innerHTML =
+      '<div class="hint" style="margin-bottom:6px">NetProxy · <code>singbox/dns</code>' + badge + '</div>' +
+      '<pre class="log">' + esc(dns.server || '') + '\n' + esc(dns.exception || '') + '\n' + esc(dns.lanRule || '') + '</pre>' +
+      '<div class="hint" style="margin:10px 0 6px">iptables · 链</div>' +
+      '<pre class="log">' + esc(g.dnatChain || '(空)') + '\n' + esc(g.postChain || '(空)') + '</pre>' +
+      '<div class="hint" style="margin-top:8px">hook: OUTPUT ' + (g.hookOutput ? '✓' : '✗') +
+      ' · POSTROUTING ' + (g.hookPost ? '✓' : '✗') +
+      ' · 服务 ' + (g.serviceCount || 0) + ' 个 · 看门狗 ' + (g.watchdog ? '✓' : '✗') + '</div>';
+  }catch(e){
+    $('globalBox').innerHTML = '<div class="empty" style="color:var(--bad)">读取失败: ' + esc(e.message) + '</div>';
+  }
+}
+
 async function loadLogs(){
   try{
     const r = await api('/api/logs?lines=120');
@@ -407,8 +437,9 @@ async function loadLogs(){
   }catch(e){ $('logBox').textContent = '读取失败: ' + e.message; }
 }
 
-loadState().then(()=>{ loadTxts(); loadLogs(); }).catch(()=>{});
+loadState().then(()=>{ loadTxts(); loadLogs(); loadGlobal(); }).catch(()=>{});
 setInterval(async ()=>{ try{ await loadState(); }catch(e){} }, 15000);
+setInterval(()=>{ loadGlobal().catch(()=>{}); }, 30000);
 setInterval(()=>{ loadLogs().catch(()=>{}); }, 30000);
 </script>
 </body>

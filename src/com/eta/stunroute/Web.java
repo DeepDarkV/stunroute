@@ -144,6 +144,9 @@ final class Web {
             case "/api/logs":
                 sendJson(s, "200 OK", logsJson(Json.i(param(query, "lines"), 120)));
                 return;
+            case "/api/global":
+                sendJson(s, "200 OK", Main.globalInfoJson());
+                return;
             case "/api/np":
                 if ("POST".equalsIgnoreCase(method)) {
                     try {

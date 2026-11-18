@@ -306,6 +306,28 @@ public final class Main {
                 + "# 也可以用本页的「应用」按钮，由守护进程直接写入";
     }
 
+    static String findDnatRule(Service s) {
+        if (s.vip == null || s.vip.isEmpty()) return "";
+        String out = Iptables.sh("iptables -t nat -S ETA_STUN 2>/dev/null");
+        for (String line : out.split("\n")) {
+            if (line.contains("-d " + s.vip + "/32") && line.contains("--dport " + s.port + " ")) {
+                return line.trim();
+            }
+        }
+        return "";
+    }
+
+    static String findMasqRule(Service s) {
+        if (s.curIp == null || s.curPort <= 0) return "";
+        String out = Iptables.sh("iptables -t nat -S ETA_STUN_POST 2>/dev/null");
+        for (String line : out.split("\n")) {
+            if (line.contains("-d " + s.curIp + "/32") && line.contains("--dport " + s.curPort + " ")) {
+                return line.trim();
+            }
+        }
+        return "";
+    }
+
     static String npInfoJson(String name) {
         Service s;
         synchronized (services) {
@@ -317,6 +339,16 @@ public final class Main {
         m.put("domain", nz(s.domain));
         m.put("vip", nz(s.vip));
         m.put("vipAuto", s.vipAuto);
+        m.put("port", s.port);
+        m.put("target", s.curIp == null ? "" : s.curIp + ":" + s.curPort);
+
+        // iptables 侧：这条映射实际落地的两条规则
+        Map<String, Object> ip = new LinkedHashMap<>();
+        ip.put("dnat", findDnatRule(s));
+        ip.put("masq", findMasqRule(s));
+        m.put("iptables", ip);
+
+        // NetProxy 侧：DNS 别名规则
         String rule = describeNpRule(s);
         m.put("rule", rule);
         m.put("script", buildNpScript(s, rule));
@@ -328,6 +360,39 @@ public final class Main {
         m.put("present", present);
         return Json.stringify(m);
     }
+
+    /** 模块对系统/NetProxy 的全局改动汇总。 */
+    static String globalInfoJson() {
+        Map<String, Object> m = new LinkedHashMap<>();
+
+        // NetProxy dns 分区的守护规则
+        Map<String, Object> dns = new LinkedHashMap<>();
+        dns.put("lanRule",
+                "{\"domain_suffix\": [\"" + NetProxyDns.LAN_SUFFIX + "\"], \"action\": \"route\", \"server\": \"dns-lan\"}");
+        dns.put("exception",
+                "{\"domain\": [\"" + NetProxyDns.PUBLIC_EXCEPTION + "\"], \"action\": \"route\", \"server\": \"dns-direct\"}");
+        dns.put("server",
+                "{\"tag\": \"dns-lan\", \"type\": \"udp\", \"server\": \"" + NetProxyDns.LAN_SERVER + "\"}");
+        String raw = NetProxyDns.run(npctl + " config read singbox/dns");
+        boolean lanOk = raw != null && raw.contains("dns-lan");
+        boolean exOk = raw != null && raw.contains(NetProxyDns.PUBLIC_EXCEPTION);
+        dns.put("lanPresent", lanOk);
+        dns.put("exceptionPresent", exOk);
+        m.put("dns", dns);
+
+        // iptables 链
+        m.put("dnatChain", Iptables.sh("iptables -t nat -S ETA_STUN 2>/dev/null").trim());
+        m.put("postChain", Iptables.sh("iptables -t nat -S ETA_STUN_POST 2>/dev/null").trim());
+        m.put("hookOutput", Iptables.shOk("iptables -t nat -C OUTPUT -j ETA_STUN"));
+        m.put("hookPost", Iptables.shOk("iptables -t nat -C POSTROUTING -j ETA_STUN_POST"));
+
+        // 其他
+        m.put("serviceCount", services.size());
+        m.put("routeLan", "sysctl net.ipv4.conf.all.route_localnet=1");
+        m.put("watchdog", new File("/data/adb/modules/stunroute/watchdog.sh").exists());
+        return Json.stringify(m);
+    }
+
 
     /** 把编辑后的规则写入 NetProxy 的 dns 分区（同一域名的旧规则会被替换）。 */
     @SuppressWarnings("unchecked")
