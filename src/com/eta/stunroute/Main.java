@@ -36,6 +36,10 @@ public final class Main {
     static volatile long lastWebRetry = 0;
     static final LinkedHashMap<String, Service> services = new LinkedHashMap<>();
 
+    static String lanSuffix = "cdxmz.top";
+    static String lanServer = "192.168.9.254";
+    static String lanException = "vpn6.cdxmz.top";
+
     static long cfgStamp = -1;
 
     public static void main(String[] args) throws Exception {
@@ -114,6 +118,9 @@ public final class Main {
             boolean alias = dnsAlias;
             String ctl = npctl;
             int wp = webPort;
+            String lanS = lanSuffix;
+            String lanV = lanServer;
+            String lanE = lanException;
 
             for (String raw : lines) {
                 String line = raw.trim();
@@ -135,6 +142,9 @@ public final class Main {
                     else if (c.startsWith("dns_alias=")) alias = "1".equals(c.substring(10).trim()) || "true".equalsIgnoreCase(c.substring(10).trim());
                     else if (c.startsWith("netproxyctl=")) ctl = c.substring(12).trim();
                     else if (c.startsWith("web_port=")) wp = parseIntSafe(c.substring(9).trim(), wp);
+                    else if (c.startsWith("lan_dns_suffix=")) lanS = c.substring(15).trim();
+                    else if (c.startsWith("lan_dns_server=")) lanV = c.substring(15).trim();
+                    else if (c.startsWith("lan_dns_exception=")) lanE = c.substring(18).trim();
                     continue;
                 }
                 Service s = Service.parse(line);
@@ -146,6 +156,9 @@ public final class Main {
             dnsAlias = alias;
             npctl = ctl;
             webPort = wp;
+            if (!lanS.isEmpty()) lanSuffix = lanS;
+            if (!lanV.isEmpty()) lanServer = lanV;
+            if (!lanE.isEmpty()) lanException = lanE;
             synchronized (services) {
                 LinkedHashMap<String, Service> merged = new LinkedHashMap<>();
                 for (Service s : next.values()) {
@@ -413,14 +426,14 @@ public final class Main {
         // NetProxy dns 分区的守护规则
         Map<String, Object> dns = new LinkedHashMap<>();
         dns.put("lanRule",
-                "{\"domain_suffix\": [\"" + NetProxyDns.LAN_SUFFIX + "\"], \"action\": \"route\", \"server\": \"dns-lan\"}");
+                "{\"domain_suffix\": [\"" + lanSuffix + "\"], \"action\": \"route\", \"server\": \"dns-lan\"}");
         dns.put("exception",
-                "{\"domain\": [\"" + NetProxyDns.PUBLIC_EXCEPTION + "\"], \"action\": \"route\", \"server\": \"dns-direct\"}");
+                "{\"domain\": [\"" + lanException + "\"], \"action\": \"route\", \"server\": \"dns-direct\"}");
         dns.put("server",
-                "{\"tag\": \"dns-lan\", \"type\": \"udp\", \"server\": \"" + NetProxyDns.LAN_SERVER + "\"}");
+                "{\"tag\": \"dns-lan\", \"type\": \"udp\", \"server\": \"" + lanServer + "\"}");
         String raw = NetProxyDns.run(npctl + " config read singbox/dns");
         boolean lanOk = raw != null && raw.contains("dns-lan");
-        boolean exOk = raw != null && raw.contains(NetProxyDns.PUBLIC_EXCEPTION);
+        boolean exOk = raw != null && raw.contains(lanException);
         dns.put("lanPresent", lanOk);
         dns.put("exceptionPresent", exOk);
         m.put("dns", dns);
@@ -497,6 +510,9 @@ public final class Main {
         m.put("dns_alias", dnsAlias);
         m.put("web_port", webPort);
         m.put("netproxyctl", npctl);
+        m.put("lan_dns_suffix", lanSuffix);
+        m.put("lan_dns_server", lanServer);
+        m.put("lan_dns_exception", lanException);
         return m;
     }
 
@@ -519,6 +535,12 @@ public final class Main {
             }
             interval = Math.max(10, Json.i(gm.get("interval"), interval));
             dnsAlias = Json.b(gm.get("dns_alias"), dnsAlias);
+            String ls = Json.s(gm.get("lan_dns_suffix"));
+            if (ls != null && !ls.trim().isEmpty()) lanSuffix = ls.trim();
+            String lv = Json.s(gm.get("lan_dns_server"));
+            if (lv != null && !lv.trim().isEmpty()) lanServer = lv.trim();
+            String le = Json.s(gm.get("lan_dns_exception"));
+            if (le != null && !le.trim().isEmpty()) lanException = le.trim();
             int wp = Json.i(gm.get("web_port"), webPort);
             if (wp >= 1024 && wp <= 65535) webPort = wp;
         }
@@ -577,6 +599,9 @@ public final class Main {
         b.append("#dns_alias=").append(dnsAlias ? 1 : 0).append('\n');
         b.append("#netproxyctl=").append(npctl).append('\n');
         b.append("#web_port=").append(webPort).append('\n');
+        b.append("#lan_dns_suffix=").append(lanSuffix).append('\n');
+        b.append("#lan_dns_server=").append(lanServer).append('\n');
+        b.append("#lan_dns_exception=").append(lanException).append('\n');
         b.append("#\n# 格式: 名称|域名|回环地址|端口|协议|TXT记录名|键\n");
         for (Service s : svcs) {
             b.append(nz(s.name)).append('|')
@@ -903,10 +928,7 @@ public final class Main {
     static final class NetProxyDns {
         static String lastApplied = "";
         static long lastLanCheck = 0;
-        static final String LAN_SUFFIX = "cdxmz.top";
-        static final String LAN_SERVER = "192.168.9.254";
-        /** 必须走公网解析的例外（VPN 服务端地址，内网 DNS 在 VPN 未连时不可达）。 */
-        static final String PUBLIC_EXCEPTION = "vpn6.cdxmz.top";
+        // 参数来自全局配置 lanSuffix / lanServer / lanException
 
         /**
          * 守护 *.cdxmz.top → 192.168.9.254 这条内网 DNS 规则。
@@ -921,11 +943,11 @@ public final class Main {
 
             String raw = run(ctl + " config read singbox/dns");
             if (raw == null || !raw.contains("\"content\"")) return;
-            if (raw.contains("dns-lan") && raw.contains(PUBLIC_EXCEPTION)) return;
 
             String content = extractContent(raw);
             String revision = extractField(raw, "revision");
             if (content == null || revision == null) return;
+            if (lanPresent(content)) return;
 
             String patched = insertLanRules(content);
             if (patched == null) {
@@ -938,12 +960,47 @@ public final class Main {
                 Files.write(tmp, patched.getBytes(StandardCharsets.UTF_8));
                 String out = run(ctl + " config apply singbox/dns " + tmp + " --revision " + revision);
                 if (out != null && out.contains("\"ok\":true")) {
-                    log("已恢复内网 DNS 规则: *." + LAN_SUFFIX + " → " + LAN_SERVER);
+                    log("已恢复内网 DNS 规则: *." + lanSuffix + " → " + lanServer);
                 } else {
                     log("恢复 dns-lan 失败: " + out);
                 }
             } catch (Throwable t) {
                 log("恢复 dns-lan 异常: " + t);
+            }
+        }
+
+        /** server 定义、后缀规则、例外规则三者齐全才算就位。 */
+        @SuppressWarnings("unchecked")
+        static boolean lanPresent(String content) {
+            try {
+                Object parsed = Json.parse(content);
+                if (!(parsed instanceof Map)) return false;
+                Map<String, Object> root = (Map<String, Object>) parsed;
+                Map<String, Object> dns = (Map<String, Object>) root.get("dns");
+                if (dns == null) return false;
+                boolean hasServer = false;
+                List<Object> servers = (List<Object>) dns.get("servers");
+                if (servers != null) {
+                    for (Object o : servers) {
+                        if (o instanceof Map && "dns-lan".equals(((Map<?, ?>) o).get("tag"))) {
+                            // 地址也要对得上，参数改了要能重建
+                            hasServer = lanServer.equals(((Map<?, ?>) o).get("server"));
+                            break;
+                        }
+                    }
+                }
+                boolean hasRule = false, hasException = false;
+                List<Object> rules = (List<Object>) dns.get("rules");
+                if (rules != null) {
+                    for (Object o : rules) {
+                        String t = Json.stringify(o);
+                        if (t.contains("dns-lan")) hasRule = true;
+                        if (t.contains(lanException)) hasException = true;
+                    }
+                }
+                return hasServer && hasRule && hasException;
+            } catch (Throwable t) {
+                return false;
             }
         }
 
@@ -957,6 +1014,22 @@ public final class Main {
                 Map<String, Object> root = (Map<String, Object>) parsed;
                 Map<String, Object> dns = (Map<String, Object>) root.get("dns");
                 if (dns == null) return null;
+
+                // 1) 保证 dns-lan server 存在（可能被 WebUI 重存时冲掉）
+                List<Object> servers = (List<Object>) dns.get("servers");
+                if (servers == null) {
+                    servers = new ArrayList<>();
+                    dns.put("servers", servers);
+                }
+                final String tag = "dns-lan";
+                servers.removeIf(o -> o instanceof Map && tag.equals(((Map<?, ?>) o).get("tag")));
+                Map<String, Object> srv = new LinkedHashMap<>();
+                srv.put("tag", tag);
+                srv.put("type", "udp");
+                srv.put("server", lanServer);
+                servers.add(srv);
+
+                // 2) 规则
                 List<Object> rules = (List<Object>) dns.get("rules");
                 if (rules == null) {
                     rules = new ArrayList<>();
@@ -967,13 +1040,13 @@ public final class Main {
                     return t.contains("cdxmz.top");
                 });
                 Map<String, Object> lan = new LinkedHashMap<>();
-                lan.put("domain_suffix", Collections.singletonList(LAN_SUFFIX));
+                lan.put("domain_suffix", Collections.singletonList(lanSuffix));
                 lan.put("action", "route");
                 lan.put("server", "dns-lan");
                 rules.add(0, lan);
 
                 Map<String, Object> ex = new LinkedHashMap<>();
-                ex.put("domain", Collections.singletonList(PUBLIC_EXCEPTION));
+                ex.put("domain", Collections.singletonList(lanException));
                 ex.put("action", "route");
                 ex.put("server", "dns-direct");
                 rules.add(0, ex);
@@ -988,7 +1061,7 @@ public final class Main {
             String serverBlock = "      {\n"
                     + "        \"tag\": \"dns-lan\",\n"
                     + "        \"type\": \"udp\",\n"
-                    + "        \"server\": \"" + LAN_SERVER + "\"\n"
+                    + "        \"server\": \"" + lanServer + "\"\n"
                     + "      },\n";
             int s = content.indexOf("\"servers\": [");
             if (s < 0) return null;
@@ -996,7 +1069,7 @@ public final class Main {
             if (lb < 0) return null;
             String withServer = content.substring(0, lb + 1) + "\n" + serverBlock + content.substring(lb + 1);
 
-            String ruleLine = "      {\"domain_suffix\": [\"" + LAN_SUFFIX + "\"], \"action\": \"route\", \"server\": \"dns-lan\"},\n";
+            String ruleLine = "      {\"domain_suffix\": [\"" + lanSuffix + "\"], \"action\": \"route\", \"server\": \"dns-lan\"},\n";
             int r = withServer.indexOf("\"rules\": [");
             if (r < 0) return null;
             int rb = withServer.indexOf('[', r);

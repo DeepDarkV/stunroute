@@ -107,6 +107,14 @@ a{color:var(--accent)}
         <button onclick="doExport()">导出配置</button>
         <button onclick="openImport()">导入配置</button>
       </div>
+      <div class="row" style="margin-top:10px">
+        <div><label>内网 DNS 后缀</label><input id="g_lansuffix" class="mono" placeholder="cdxmz.top"></div>
+        <div><label>内网 DNS 服务器</label><input id="g_lanserver" class="mono" placeholder="192.168.9.254"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="full"><label>公网解析例外（这些域名不走内网 DNS）</label><input id="g_lanexception" class="mono" placeholder="vpn6.cdxmz.top"></div>
+      </div>
+      <div class="hint">内网 DNS 规则由守护进程自动维护，参数会随配置一起导出/导入。</div>
       <div class="hint">导出内容包含全局设置与全部映射，重装模块后可一键恢复。</div>
     </div>
   </section>
@@ -248,6 +256,9 @@ async function loadState(){
   $('g_interval').value = g.interval || 60;
   $('g_alias').value = String(g.dns_alias ? 1 : 0);
   $('g_webport').value = g.web_port || 8767;
+  $('g_lansuffix').value = g.lan_dns_suffix || '';
+  $('g_lanserver').value = g.lan_dns_server || '';
+  $('g_lanexception').value = g.lan_dns_exception || '';
   renderServices();
   $('dot').className = 'dot' + (state.running ? ' on' : '');
   $('hmeta').textContent = (state.running ? '运行中' : '未运行') + ' · ' + (state.services || []).length + ' 个服务';
@@ -294,7 +305,10 @@ async function saveGlobal(){
     dns_server: $('g_dns').value.trim(),
     interval: parseInt($('g_interval').value) || 60,
     dns_alias: $('g_alias').value === '1',
-    web_port: parseInt($('g_webport').value) || 8767
+    web_port: parseInt($('g_webport').value) || 8767,
+    lan_dns_suffix: $('g_lansuffix').value.trim(),
+    lan_dns_server: $('g_lanserver').value.trim(),
+    lan_dns_exception: $('g_lanexception').value.trim()
   };
   await pushConfig('全局设置已保存');
 }
