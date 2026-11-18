@@ -1,4 +1,4 @@
 {
-  "stun.niyilu.top": "5.6.7.8:5678",
-  "open.niyilu.top": "9.9.9.9:9999"
+  "stun.example.com": "5.6.7.8:5678",
+  "open.example.com": "9.9.9.9:9999"
 }

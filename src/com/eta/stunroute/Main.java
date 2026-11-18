@@ -76,9 +76,9 @@ public final class Main {
         return out;
     }
 
-    static String lanSuffix = "cdxmz.top";
-    static String lanServer = "192.168.9.254";
-    static String lanException = "vpn6.cdxmz.top";
+    static String lanSuffix = "corp.example.com";
+    static String lanServer = "192.0.2.53";
+    static String lanException = "vpn.example.com";
 
     static long cfgStamp = -1;
 
@@ -1033,7 +1033,7 @@ public final class Main {
         // 参数来自全局配置 lanSuffix / lanServer / lanException
 
         /**
-         * 守护 *.cdxmz.top → 192.168.9.254 这条内网 DNS 规则。
+         * 守护 *.corp.example.com → 192.0.2.53 这条内网 DNS 规则。
          * NetProxy 的 WebUI 重新保存 DNS 设置时会把分区重新生成、这条规则被冲掉，
          * 这里每分钟检查一次，缺失就增量补回去（不影响分区里的其他内容）。
          */

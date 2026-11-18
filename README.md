@@ -101,7 +101,7 @@ http://127.0.0.1:8767/
   **内网 DNS 支持多组**（`#lan_dns=` 每行一组，格式 `后缀1,后缀2|服务器|例外1,例外2`）：
 
   ```
-  #lan_dns=cdxmz.top|192.168.9.254|vpn6.cdxmz.top
+  #lan_dns=corp.example.com|192.0.2.53|vpn.example.com
   #lan_dns=corp.lan,lan|10.0.0.53|
   ```
 
@@ -109,7 +109,7 @@ http://127.0.0.1:8767/
   删掉某一组后，对应的 server 和规则会自动清理。这些参数都在 `globals.lan_groups` 里，
   随导出/导入一起走。
 - **全局改动**：模块对系统做的、不属于某条映射的修改都列在这里——
-  NetProxy `singbox/dns` 的守护规则（`dns-lan` server、`vpn6.cdxmz.top` 公网例外、`cdxmz.top` 后缀路由）、
+  NetProxy `singbox/dns` 的守护规则（`dns-lan` server、`vpn.example.com` 公网例外、`corp.example.com` 后缀路由）、
   两条 iptables 链的完整内容、OUTPUT/POSTROUTING 挂载状态、服务数与看门狗状态；
 - **TXT 记录**：一键查询各记录的真实内容，直接看到解析结果；
 - **运行日志**：最近 120 行，可自动刷新。
@@ -135,7 +135,7 @@ POST /api/action                 {"action":"refresh"|"clean"|"dnsresync"}
 | stunroute 进程 | `watchdog.sh` 每 30s 检查，挂了用 `setsid` 拉起 | ≤30s |
 | Web 管理界面 | 端口被旧进程占用导致 bind 失败时，每 20s 重试 | ≤20s |
 | iptables 映射 | 每轮检查 `ETA_STUN` 链是否还在，缺失即重建 | ≤60s |
-| NetProxy 内网 DNS（`*.cdxmz.top → 192.168.9.254`） | 每分钟检查 `singbox/dns` 分区，被冲掉就增量补回 | ≤40s |
+| NetProxy 内网 DNS（`*.corp.example.com → 192.0.2.53`） | 每分钟检查 `singbox/dns` 分区，被冲掉就增量补回 | ≤40s |
 
 开机时 `service.sh` 会先拉起 daemon，再启动 watchdog（单例检查，不会重复启动）。
 
