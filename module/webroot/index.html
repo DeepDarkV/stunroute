@@ -511,11 +511,18 @@ async function loadGlobal(){
   try{
     const g = await api('/api/global');
     const dns = g.dns || {};
-    const ok = dns.lanPresent && dns.exceptionPresent;
+    const gs = dns.groups || [];
+    const ok = dns.ok;
     const badge = ok ? '<span class="badge ok">已就位</span>' : '<span class="badge bad">缺失</span>';
+    const dnsBody = gs.length
+      ? '<pre class="log">' + gs.map(x =>
+          esc((x.suffixes || []).join(',')) + ' → ' + esc(x.server) +
+          (((x.exceptions || []).length) ? '   (例外: ' + esc(x.exceptions.join(',')) + ')' : '') +
+          '   ' + (x.present ? '✓' : '✗')).join('\n') + '</pre>'
+      : '<div class="hint">未配置内网 DNS 组</div>';
     $('globalBox').innerHTML =
       '<div class="hint" style="margin-bottom:6px">NetProxy · <code>singbox/dns</code>' + badge + '</div>' +
-      '<pre class="log">' + esc(dns.server || '') + '\n' + esc(dns.exception || '') + '\n' + esc(dns.lanRule || '') + '</pre>' +
+      dnsBody +
       '<div class="hint" style="margin:10px 0 6px">iptables · 链</div>' +
       '<pre class="log">' + esc(g.dnatChain || '(空)') + '\n' + esc(g.postChain || '(空)') + '</pre>' +
       '<div class="hint" style="margin-top:8px">hook: OUTPUT ' + (g.hookOutput ? '✓' : '✗') +

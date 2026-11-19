@@ -481,22 +481,39 @@ public final class Main {
     }
 
     /** 模块对系统/NetProxy 的全局改动汇总。 */
+    @SuppressWarnings("unchecked")
     static String globalInfoJson() {
         Map<String, Object> m = new LinkedHashMap<>();
 
-        // NetProxy dns 分区的守护规则
+        // 内网 DNS 组：直接按当前生效的 lanGroups 展示
         Map<String, Object> dns = new LinkedHashMap<>();
-        dns.put("lanRule",
-                "{\"domain_suffix\": [\"" + lanSuffix + "\"], \"action\": \"route\", \"server\": \"dns-lan\"}");
-        dns.put("exception",
-                "{\"domain\": [\"" + lanException + "\"], \"action\": \"route\", \"server\": \"dns-direct\"}");
-        dns.put("server",
-                "{\"tag\": \"dns-lan\", \"type\": \"udp\", \"server\": \"" + lanServer + "\"}");
+        List<LanGroup> gs;
+        synchronized (lanGroups) { gs = new ArrayList<>(lanGroups); }
         String raw = NetProxyDns.run(npctl + " config read singbox/dns");
-        boolean lanOk = raw != null && raw.contains("dns-lan");
-        boolean exOk = raw != null && raw.contains(lanException);
-        dns.put("lanPresent", lanOk);
-        dns.put("exceptionPresent", exOk);
+        String content = raw == null ? null : NetProxyDns.extractContent(raw);
+        Map<String, Object> dnsMap = null;
+        if (content != null) {
+            try {
+                Object parsed = Json.parse(content);
+                if (parsed instanceof Map) dnsMap = (Map<String, Object>) ((Map<String, Object>) parsed).get("dns");
+            } catch (Throwable ignore) {
+            }
+        }
+        List<Object> groups = new ArrayList<>();
+        boolean allOk = !gs.isEmpty();
+        for (LanGroup g : gs) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("tag", g.tag());
+            item.put("suffixes", new ArrayList<>(g.suffixes));
+            item.put("server", g.server);
+            item.put("exceptions", new ArrayList<>(g.exceptions));
+            boolean ok = dnsMap != null && NetProxyDns.groupPresent(dnsMap, g);
+            item.put("present", ok);
+            allOk &= ok;
+            groups.add(item);
+        }
+        dns.put("groups", groups);
+        dns.put("ok", allOk);
         m.put("dns", dns);
 
         // iptables 链
@@ -507,11 +524,9 @@ public final class Main {
 
         // 其他
         m.put("serviceCount", services.size());
-        m.put("routeLan", "sysctl net.ipv4.conf.all.route_localnet=1");
         m.put("watchdog", new File("/data/adb/modules/stunroute/watchdog.sh").exists());
         return Json.stringify(m);
     }
-
 
     /** 把编辑后的规则写入 NetProxy 的 dns 分区（同一域名的旧规则会被替换）。 */
     @SuppressWarnings("unchecked")
@@ -1097,6 +1112,33 @@ public final class Main {
                 if (!list.contains(w)) return false;
             }
             return true;
+        }
+
+        /** 单组是否就位：server 地址匹配 + 后缀规则 + 例外规则（无例外时忽略）。 */
+        @SuppressWarnings("unchecked")
+        static boolean groupPresent(Map<String, Object> dns, LanGroup g) {
+            List<Object> servers = (List<Object>) dns.get("servers");
+            List<Object> rules = (List<Object>) dns.get("rules");
+            if (servers == null || rules == null) return false;
+            boolean srvOk = false;
+            for (Object o : servers) {
+                if (o instanceof Map && g.tag().equals(((Map<?, ?>) o).get("tag"))) {
+                    srvOk = g.server.equals(((Map<?, ?>) o).get("server"));
+                    break;
+                }
+            }
+            if (!srvOk) return false;
+            boolean ruleOk = false, exOk = g.exceptions.isEmpty();
+            for (Object o : rules) {
+                if (!(o instanceof Map)) continue;
+                Map<?, ?> r = (Map<?, ?>) o;
+                if (g.tag().equals(r.get("server"))) {
+                    ruleOk = sameSet(r.get("domain_suffix"), g.suffixes);
+                } else if ("dns-direct".equals(r.get("server"))) {
+                    if (sameSet(r.get("domain"), g.exceptions)) exOk = true;
+                }
+            }
+            return ruleOk && exOk;
         }
 
         /** 每一组都要有 server 定义、后缀规则、例外规则（无例外则跳过）才算就位。 */
