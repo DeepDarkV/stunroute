@@ -76,9 +76,6 @@ public final class Main {
         return out;
     }
 
-    static String lanSuffix = "corp.example.com";
-    static String lanServer = "192.0.2.53";
-    static String lanException = "vpn.example.com";
 
     static long cfgStamp = -1;
 
@@ -159,9 +156,9 @@ public final class Main {
             String ctl = npctl;
             int wp = webPort;
             List<String> lanLines = new ArrayList<>();
-            String lanS = lanSuffix;
-            String lanV = lanServer;
-            String lanE = lanException;
+            String lanS = "";
+            String lanV = "";
+            String lanE = "";
 
             for (String raw : lines) {
                 String line = raw.trim();
@@ -198,9 +195,6 @@ public final class Main {
             dnsAlias = alias;
             npctl = ctl;
             webPort = wp;
-            if (!lanS.isEmpty()) lanSuffix = lanS;
-            if (!lanV.isEmpty()) lanServer = lanV;
-            if (!lanE.isEmpty()) lanException = lanE;
 
             // 多组优先；没有 lan_dns 行时用旧的三个单值键构造一组
             List<LanGroup> groups = new ArrayList<>();
@@ -208,12 +202,12 @@ public final class Main {
                 LanGroup g = LanGroup.parse(line, groups.size());
                 if (g != null) groups.add(g);
             }
-            if (groups.isEmpty() && !lanServer.isEmpty() && !lanSuffix.isEmpty()) {
+            if (groups.isEmpty() && !lanV.isEmpty() && !lanS.isEmpty()) {
                 LanGroup g = new LanGroup();
                 g.index = 0;
-                g.suffixes.addAll(splitCsv(lanSuffix));
-                g.server = lanServer;
-                g.exceptions.addAll(splitCsv(lanException));
+                g.suffixes.addAll(splitCsv(lanS));
+                g.server = lanV;
+                g.exceptions.addAll(splitCsv(lanE));
                 if (!g.suffixes.isEmpty()) groups.add(g);
             }
             synchronized (lanGroups) {
@@ -380,6 +374,24 @@ public final class Main {
         }
         m.put("services", list);
         return Json.stringify(m);
+    }
+
+    /** 把当前配置写成文件保存到 /sdcard/Download，返回路径。 */
+    static String exportToFile() {
+        try {
+            String json = exportJson();
+            String name = "stunroute-" + new SimpleDateFormat("yyyyMMdd-HHmmss").format(new Date()) + ".json";
+            Path dir = Paths.get("/sdcard/Download");
+            Files.createDirectories(dir);
+            Path f = dir.resolve(name);
+            Files.write(f, json.getBytes(StandardCharsets.UTF_8));
+            log("配置已导出到 " + f);
+            return "{\"ok\":true,\"path\":" + Json.stringify(f.toString())
+                    + ",\"name\":" + Json.stringify(name) + "}";
+        } catch (Throwable t) {
+            log("导出文件失败: " + t);
+            return "{\"ok\":false,\"error\":" + Json.stringify(String.valueOf(t)) + "}";
+        }
     }
 
     static String importJson(String body) {
@@ -586,9 +598,6 @@ public final class Main {
         m.put("dns_alias", dnsAlias);
         m.put("web_port", webPort);
         m.put("netproxyctl", npctl);
-        m.put("lan_dns_suffix", lanSuffix);
-        m.put("lan_dns_server", lanServer);
-        m.put("lan_dns_exception", lanException);
         List<Object> groupsArr = new ArrayList<>();
         List<LanGroup> gs;
         synchronized (lanGroups) { gs = new ArrayList<>(lanGroups); }
@@ -646,12 +655,24 @@ public final class Main {
                     NetProxyDns.lastLanCheck = 0;
                 }
             }
-            String ls = Json.s(gm.get("lan_dns_suffix"));
-            if (ls != null && !ls.trim().isEmpty()) lanSuffix = ls.trim();
-            String lv = Json.s(gm.get("lan_dns_server"));
-            if (lv != null && !lv.trim().isEmpty()) lanServer = lv.trim();
-            String le = Json.s(gm.get("lan_dns_exception"));
-            if (le != null && !le.trim().isEmpty()) lanException = le.trim();
+            // 兼容旧版导出（只有 lan_dns_suffix/server/exception 三个键）
+            if (!(lg instanceof List) || ((List<?>) lg).isEmpty()) {
+                String ls = Json.s(gm.get("lan_dns_suffix"));
+                String lv = Json.s(gm.get("lan_dns_server"));
+                String le = Json.s(gm.get("lan_dns_exception"));
+                if (lv != null && !lv.trim().isEmpty() && ls != null && !ls.trim().isEmpty()) {
+                    LanGroup ng = new LanGroup();
+                    ng.index = 0;
+                    ng.suffixes.addAll(splitCsv(ls));
+                    ng.server = lv.trim();
+                    ng.exceptions.addAll(splitCsv(le));
+                    synchronized (lanGroups) {
+                        lanGroups.clear();
+                        lanGroups.add(ng);
+                    }
+                    NetProxyDns.lastLanCheck = 0;
+                }
+            }
             int wp = Json.i(gm.get("web_port"), webPort);
             if (wp >= 1024 && wp <= 65535) webPort = wp;
         }
@@ -712,9 +733,7 @@ public final class Main {
         b.append("#web_port=").append(webPort).append('\n');
         List<LanGroup> gs;
         synchronized (lanGroups) { gs = new ArrayList<>(lanGroups); }
-        if (gs.isEmpty()) {
-            b.append("#lan_dns=").append(lanSuffix).append('|').append(lanServer).append('|').append(lanException).append('\n');
-        } else {
+        if (!gs.isEmpty()) {
             for (LanGroup g : gs) {
                 b.append("#lan_dns=").append(g.toLine()).append('\n');
             }
@@ -1045,7 +1064,6 @@ public final class Main {
     static final class NetProxyDns {
         static String lastApplied = "";
         static long lastLanCheck = 0;
-        // 参数来自全局配置 lanSuffix / lanServer / lanException
 
         /**
          * 守护 *.corp.example.com → 192.0.2.53 这条内网 DNS 规则。
@@ -1242,26 +1260,6 @@ public final class Main {
             } catch (Throwable t) {
                 return null;
             }
-        }
-
-        static String insertLanRulesLegacy(String content) {
-            String serverBlock = "      {\n"
-                    + "        \"tag\": \"dns-lan\",\n"
-                    + "        \"type\": \"udp\",\n"
-                    + "        \"server\": \"" + lanServer + "\"\n"
-                    + "      },\n";
-            int s = content.indexOf("\"servers\": [");
-            if (s < 0) return null;
-            int lb = content.indexOf('[', s);
-            if (lb < 0) return null;
-            String withServer = content.substring(0, lb + 1) + "\n" + serverBlock + content.substring(lb + 1);
-
-            String ruleLine = "      {\"domain_suffix\": [\"" + lanSuffix + "\"], \"action\": \"route\", \"server\": \"dns-lan\"},\n";
-            int r = withServer.indexOf("\"rules\": [");
-            if (r < 0) return null;
-            int rb = withServer.indexOf('[', r);
-            if (rb < 0) return null;
-            return withServer.substring(0, rb + 1) + "\n" + ruleLine + withServer.substring(rb + 1);
         }
 
         static void ensure(String ctl, Map<String, Service> svcs) {

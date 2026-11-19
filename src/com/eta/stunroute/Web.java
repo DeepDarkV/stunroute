@@ -88,17 +88,9 @@ final class Web {
                     got += n;
                 }
                 body = new String(buf, 0, got, StandardCharsets.UTF_8);
-            } else if ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method)) {
-                // 没给 Content-Length 时退化为读到连接关闭
-                ByteArrayOutputStream bb = new ByteArrayOutputStream();
-                byte[] tmp = new byte[4096];
-                int n;
-                while ((n = in.read(tmp)) > 0) {
-                    bb.write(tmp, 0, n);
-                    if (bb.size() > (1 << 20)) break;
-                }
-                body = bb.toString("UTF-8");
             }
+            // 注意：POST 但 clen==0 时不要尝试读到 EOF，
+            // 否则短连接客户端不会关闭写端，会一直阻塞到 socket 超时。
             route(s, method, path, query, body);
         } catch (Throwable ignore) {
         }
@@ -146,6 +138,13 @@ final class Web {
                 return;
             case "/api/export":
                 sendJson(s, "200 OK", Main.exportJson());
+                return;
+            case "/api/export-file":
+                if ("POST".equalsIgnoreCase(method)) {
+                    sendJson(s, "200 OK", Main.exportToFile());
+                } else {
+                    sendJson(s, "405 Method Not Allowed", "{\"ok\":false}");
+                }
                 return;
             case "/api/import":
                 if ("POST".equalsIgnoreCase(method)) {
